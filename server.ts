@@ -6,6 +6,8 @@ import db from './server/db';
 import multer from 'multer';
 import fs from 'fs';
 import { Trip, WorkDay } from './src/types';
+import cors from 'cors';
+
 
 const publicUser = (user: any) => {
   const { password, ...safeUser } = user;
@@ -14,10 +16,13 @@ const publicUser = (user: any) => {
 
 async function startServer() {
   const app = express();
- const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '12mb' }));
-
+  app.use(cors({
+    origin: 'https://panchathan-administration.vercel.app',
+    credentials: true
+  }));
   app.use((req, res, next) => {
     console.log(`[HTTP] ${req.method} ${req.url}`);
     next();
@@ -590,9 +595,9 @@ async function startServer() {
   }
 
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[SERVER] Panchathan running on port ${PORT}`);
-});
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[SERVER] Panchathan running on port ${PORT}`);
+  });
 }
 
 startServer().catch(err => {
