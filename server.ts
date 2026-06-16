@@ -14,7 +14,7 @@ const publicUser = (user: any) => {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+ const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json({ limit: '12mb' }));
 
@@ -589,9 +589,10 @@ async function startServer() {
     app.get('*', (_req, res) => res.sendFile(path.join(distPath, 'index.html')));
   }
 
-  app.listen(PORT, '127.0.0.1', () => {
-    console.log(`[SERVER] Panchathan running at http://localhost:${PORT}`);
-  });
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`[SERVER] Panchathan running on port ${PORT}`);
+});
 }
 
 startServer().catch(err => {
