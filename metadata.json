@@ -1,0 +1,6 @@
+{
+  "name": "Panchathan Logistics",
+  "description": "Industrial fleet management, real-time vehicle telematics, and route tracking platform.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
