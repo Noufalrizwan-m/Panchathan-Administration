@@ -45,9 +45,15 @@ function StatusBadge({ status, small }: { status: string; small?: boolean }) {
 
 // ── Employee Form Modal ──────────────────────────────────────────────────────
 
+const DESIGNATIONS = [
+  'Executive', 'Senior Executive', 'Delivery Associate', 'Senior Delivery Associate',
+  'Field Agent', 'Team Lead', 'Supervisor', 'Driver', 'Coordinator', 'Other'
+];
+
 interface EmpForm {
   name: string; username: string; password: string; phone: string;
-  employeeCode: string; region: string; licenseNumber: string; emergencyContact: string;
+  employeeCode: string; city: string; state: string; licenseNumber: string;
+  emergencyContact: string; designation: string;
 }
 
 function EmployeeFormModal({
@@ -64,9 +70,11 @@ function EmployeeFormModal({
     password: '',
     phone: initial?.phone || '',
     employeeCode: initial?.employeeCode || '',
-    region: initial?.region || 'Central',
+    city: initial?.city || '',
+    state: initial?.state || '',
     licenseNumber: initial?.licenseNumber || '',
     emergencyContact: initial?.emergencyContact || '',
+    designation: (initial as any)?.designation || '',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -93,7 +101,7 @@ function EmployeeFormModal({
         const patchRes = await fetch(`/api/drivers/${initial.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: form.name, phone: form.phone, emergencyContact: form.emergencyContact, region: form.region, licenseNumber: form.licenseNumber, operatorName: 'Admin' }),
+          body: JSON.stringify({ name: form.name, phone: form.phone, emergencyContact: form.emergencyContact, city: form.city, state: form.state, licenseNumber: form.licenseNumber, designation: form.designation, operatorName: 'Admin' }),
         });
         if (!patchRes.ok) { const d = await patchRes.json(); throw new Error(d.error); }
         if (form.password && initial.username) {
@@ -110,8 +118,6 @@ function EmployeeFormModal({
     } finally { setLoading(false); }
   }
 
-  const REGIONS = ['Central', 'North', 'South', 'East', 'West', 'North-East', 'Other'];
-
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-md max-h-[92vh] overflow-y-auto">
@@ -126,41 +132,50 @@ function EmployeeFormModal({
           {error && <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">{error}</div>}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="sm:col-span-2">
+            <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Full Name <span className="text-red-500">*</span></label>
-              <input type="text" value={form.name} onChange={e => set('name', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Employee full name" />
+              <input type="text" value={form.name} onChange={e => set('name', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="Employee full name" autoComplete="off" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Designation <span className="text-red-500">*</span></label>
+              <select value={form.designation} onChange={e => set('designation', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white">
+                <option value="">Select designation…</option>
+                {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Username <span className="text-red-500">*</span></label>
-              <input type="text" value={form.username} onChange={e => set('username', e.target.value)} disabled={mode === 'edit'} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-gray-50 disabled:text-gray-400" placeholder="login username" />
+              <input type="text" value={form.username} onChange={e => set('username', e.target.value)} disabled={mode === 'edit'} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 disabled:bg-gray-50 disabled:text-gray-400" placeholder="e.g. john.kumar" autoComplete="off" name="emp-username" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">
                 {mode === 'edit' ? 'New Password (blank = keep)' : 'Password'} {mode === 'add' && <span className="text-red-500">*</span>}
               </label>
-              <input type="password" value={form.password} onChange={e => set('password', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="••••••••" />
+              <input type="password" value={form.password} onChange={e => set('password', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder={mode === 'edit' ? 'Leave blank to keep current' : 'Set a password'} autoComplete="new-password" name="emp-password" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Phone</label>
-              <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="+91 9876543210" />
+              <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="+91 9876543210" autoComplete="off" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Emergency Contact</label>
-              <input type="tel" value={form.emergencyContact} onChange={e => set('emergencyContact', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="+91 9876543210" />
+              <input type="tel" value={form.emergencyContact} onChange={e => set('emergencyContact', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="+91 9876543210" autoComplete="off" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Employee Code</label>
-              <input type="text" value={form.employeeCode} onChange={e => set('employeeCode', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="EMP-001" />
+              <input type="text" value={form.employeeCode} onChange={e => set('employeeCode', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="EMP-001" autoComplete="off" />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-600 block mb-1">Region / Area</label>
-              <select value={form.region} onChange={e => set('region', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
-                {REGIONS.map(r => <option key={r} value={r}>{r}</option>)}
-              </select>
+              <label className="text-xs font-medium text-gray-600 block mb-1">City</label>
+              <input type="text" value={form.city} onChange={e => set('city', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="e.g. Chennai" autoComplete="off" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">State</label>
+              <input type="text" value={form.state} onChange={e => set('state', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" placeholder="e.g. Tamil Nadu" autoComplete="off" />
             </div>
             <div className="sm:col-span-2">
               <label className="text-xs font-medium text-gray-600 block mb-1">License Number</label>
-              <input type="text" value={form.licenseNumber} onChange={e => set('licenseNumber', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono" placeholder="TN0120240012345" />
+              <input type="text" value={form.licenseNumber} onChange={e => set('licenseNumber', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 font-mono" placeholder="TN0120240012345" autoComplete="off" />
             </div>
           </div>
 
@@ -284,7 +299,7 @@ function TaskDispatchModal({
             <label className="text-xs font-medium text-gray-600 block mb-1">Employee <span className="text-red-500">*</span></label>
             <select value={form.driverId} onChange={e => set('driverId', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
               <option value="">Select employee...</option>
-              {drivers.map(d => <option key={d.id} value={d.id}>{d.name} ({d.employeeCode || d.id})</option>)}
+              {drivers.map(d => <option key={d.id} value={d.id}>{d.fullName} ({d.employeeCode || d.id})</option>)}
             </select>
           </div>
 
@@ -528,7 +543,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
 
   const filteredDrivers = drivers.filter(d =>
     !search ||
-    d.name.toLowerCase().includes(search.toLowerCase()) ||
+    (d.fullName || '').toLowerCase().includes(search.toLowerCase()) ||
     (d.employeeCode || '').toLowerCase().includes(search.toLowerCase()) ||
     (userMap[d.id]?.username || '').toLowerCase().includes(search.toLowerCase())
   );
@@ -571,65 +586,67 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
     <div className="min-h-screen bg-gray-50">
 
       {/* ── Top Bar ── */}
-      <div className="bg-[#0f3d20] text-white px-4 sm:px-6 py-3 flex items-center justify-between sticky top-0 z-20 shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center shrink-0">
-            <Shield size={16} className="text-white" />
-          </div>
-          <div>
-            <div className="font-bold text-sm leading-tight">Panchathan Admin</div>
-            <div className="text-emerald-300 text-xs hidden sm:block">{sessionUser.fullName}</div>
+      <div className="bg-white border-b border-gray-200 px-4 sm:px-8 py-3 flex items-center justify-between sticky top-0 z-20 shadow-sm">
+        <div className="flex items-center gap-4">
+          <img
+            src="https://panchathanlogistics.com/logo.png"
+            alt="Panchathan Logistics"
+            className="h-12 sm:h-14 w-auto object-contain"
+          />
+          <div className="hidden sm:block border-l-2 border-[#0f3d20]/20 pl-4">
+            <div className="text-gray-800 font-bold text-base leading-tight">{sessionUser.fullName}</div>
+            <div className="text-[#0f3d20] text-sm font-medium">Administrator</div>
           </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button onClick={load} className="p-2 hover:bg-white/10 rounded-xl transition-colors" title="Refresh">
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />
+        <div className="flex items-center gap-2">
+          <button onClick={load} className="p-2.5 text-gray-500 hover:text-[#0f3d20] hover:bg-emerald-50 rounded-xl transition-colors" title="Refresh">
+            <RefreshCw size={20} className={loading ? 'animate-spin' : ''} />
           </button>
-          <button onClick={onLogout} className="p-2 hover:bg-white/10 rounded-xl transition-colors" title="Logout">
-            <LogOut size={15} />
+          <button onClick={onLogout} className="flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-xl transition-colors border border-gray-200">
+            <LogOut size={18} /> <span className="hidden sm:inline">Logout</span>
           </button>
         </div>
       </div>
 
       {/* ── Stats Grid ── */}
-      <div className="bg-white border-b border-gray-100 px-4 py-3">
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3 max-w-6xl mx-auto">
+      <div className="bg-white border-b border-gray-100 px-4 sm:px-8 py-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 max-w-6xl mx-auto">
           {[
             { label: 'Employees', value: stats.totalEmployees, sub: `${stats.activeEmployees} active`, color: 'text-blue-600', bg: 'bg-blue-50' },
             { label: 'Pending Tasks', value: stats.pendingTasks, sub: 'in progress', color: 'text-amber-600', bg: 'bg-amber-50' },
             { label: 'Done Today', value: stats.completedToday, sub: 'completed', color: 'text-green-600', bg: 'bg-green-50' },
             { label: 'Vehicles', value: stats.totalVehicles, sub: `${stats.idleVehicles} idle`, color: 'text-slate-600', bg: 'bg-slate-50' },
           ].map(s => (
-            <div key={s.label} className={`${s.bg} rounded-xl p-2.5 sm:p-3 text-center`}>
-              <div className={`text-2xl font-black ${s.color}`}>{s.value}</div>
-              <div className="text-xs font-semibold text-gray-700">{s.label}</div>
-              <div className="text-[10px] text-gray-400">{s.sub}</div>
+            <div key={s.label} className={`${s.bg} rounded-xl p-3 sm:p-4 text-center`}>
+              <div className={`text-3xl sm:text-4xl font-black ${s.color}`}>{s.value}</div>
+              <div className="text-sm font-semibold text-gray-700 mt-0.5">{s.label}</div>
+              <div className="text-xs text-gray-400 mt-0.5">{s.sub}</div>
             </div>
           ))}
         </div>
       </div>
 
       {/* ── Tab Navigation ── */}
-      <div className="bg-white border-b border-gray-200 sticky top-[52px] sm:top-[60px] z-10">
+      <div className="bg-white border-b border-gray-200 sticky top-[64px] sm:top-[68px] z-10">
         <div className="max-w-6xl mx-auto flex">
           {([
-            { tab: 'employees', icon: <Users size={14} />, label: 'Employees' },
-            { tab: 'vehicles',  icon: <Truck size={14} />, label: 'Vehicles' },
-            { tab: 'tasks',     icon: <ClipboardList size={14} />, label: 'Tasks' },
-            { tab: 'activity',  icon: <Activity size={14} />, label: 'Activity' },
+            { tab: 'employees', icon: <Users size={18} />, label: 'Employees' },
+            { tab: 'vehicles',  icon: <Truck size={18} />, label: 'Vehicles' },
+            { tab: 'tasks',     icon: <ClipboardList size={18} />, label: 'Tasks' },
+            { tab: 'activity',  icon: <Activity size={18} />, label: 'Activity' },
           ] as { tab: Tab; icon: React.ReactNode; label: string }[]).map(item => (
             <button
               key={item.tab}
               onClick={() => setActiveTab(item.tab)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-[11px] sm:text-xs font-semibold border-b-2 transition-all ${activeTab === item.tab ? 'border-[#0f3d20] text-[#0f3d20]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
+              className={`flex-1 flex items-center justify-center gap-2 py-3 sm:py-3.5 text-xs sm:text-sm font-semibold border-b-2 transition-all ${activeTab === item.tab ? 'border-[#0f3d20] text-[#0f3d20]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}
             >
-              {item.icon}{item.label}
+              {item.icon}<span className="hidden sm:inline">{item.label}</span><span className="sm:hidden">{item.label}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <div className="p-3 sm:p-4 max-w-6xl mx-auto">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto">
 
         {/* ══════════════ EMPLOYEES TAB ══════════════ */}
         {activeTab === 'employees' && (
@@ -677,18 +694,27 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                       {/* Card header */}
                       <div className="flex items-start gap-3 p-4">
                         <div className="w-11 h-11 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-lg shrink-0">
-                          {driver.name.charAt(0).toUpperCase()}
+                          {(driver.fullName || '?').charAt(0).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="font-semibold text-gray-900">{driver.name}</div>
+                          <div className="font-semibold text-gray-900">{driver.fullName}</div>
                           <div className="text-xs text-gray-500 mt-0.5 flex flex-wrap gap-1 items-center">
                             <span className="font-mono">{driver.employeeCode || driver.id}</span>
                             {driver.phone && <span>· <Phone size={9} className="inline" /> {driver.phone}</span>}
                             {empUsername && <span className="text-emerald-600 font-semibold">@{empUsername}</span>}
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                            {driver.designation && (
+                              <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold">
+                                {driver.designation}
+                              </span>
+                            )}
                             <StatusBadge status={driver.status} small />
-                            <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">{driver.region}</span>
+                            {(driver.city || driver.state) && (
+                              <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full">
+                                {[driver.city, driver.state].filter(Boolean).join(', ')}
+                              </span>
+                            )}
                             {pendingCount > 0 && (
                               <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-semibold">
                                 {pendingCount} pending
@@ -718,7 +744,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                           </button>
                           <button
                             title="Delete"
-                            onClick={() => { if (empUsername) deleteEmployee(empUsername, driver.name); else alert('No login account linked to this employee.'); }}
+                            onClick={() => { if (empUsername) deleteEmployee(empUsername, driver.fullName); else alert('No login account linked to this employee.'); }}
                             className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                           >
                             <Trash2 size={14} />
@@ -735,8 +761,8 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                               <div className="text-xs font-mono font-semibold text-gray-700 mt-0.5">{driver.licenseNumber || '—'}</div>
                             </div>
                             <div>
-                              <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Experience</div>
-                              <div className="text-xs font-semibold text-gray-700 mt-0.5">{driver.experienceYears || 0} yrs</div>
+                              <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">City</div>
+                              <div className="text-xs font-semibold text-gray-700 mt-0.5">{[driver.city, driver.state].filter(Boolean).join(', ') || '—'}</div>
                             </div>
                             <div>
                               <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Emergency Contact</div>
@@ -984,7 +1010,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                 </div>
                               )}
                               <div className="text-sm font-medium text-gray-800 truncate">{trip.origin}</div>
-                              {driver && <div className="text-xs text-emerald-600 mt-0.5 font-medium">→ {driver.name}</div>}
+                              {driver && <div className="text-xs text-emerald-600 mt-0.5 font-medium">→ {driver.fullName}</div>}
                               {(trip.courierName || trip.podNumber) && (
                                 <div className="text-xs text-gray-400 mt-0.5">
                                   {trip.courierName}{trip.podNumber ? ` #${trip.podNumber}` : ''}
@@ -1069,7 +1095,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                             <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
                           )}
                           <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
-                          <div className="text-xs text-gray-400">{driver?.name} · {trip.taskType}</div>
+                          <div className="text-xs text-gray-400">{driver?.fullName} · {trip.taskType}</div>
                         </div>
                         <div className="text-xs text-gray-400 shrink-0">
                           {new Date(trip.lastUpdated).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
@@ -1099,7 +1125,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                             <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
                           )}
                           <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
-                          <div className="text-xs text-gray-400">{driver?.name}</div>
+                          <div className="text-xs text-gray-400">{driver?.fullName}</div>
                           {trip.remark && <div className="text-xs text-red-600 mt-0.5 italic">"{trip.remark}"</div>}
                         </div>
                       </div>
@@ -1194,14 +1220,16 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
           mode="edit"
           initial={{
             id: editingEmp.id,
-            name: editingEmp.name,
+            name: editingEmp.fullName,
             username: editingEmp.username,
             phone: editingEmp.phone,
             employeeCode: editingEmp.employeeCode,
-            region: editingEmp.region,
+            city: editingEmp.city,
+            state: editingEmp.state,
             licenseNumber: editingEmp.licenseNumber,
             emergencyContact: editingEmp.emergencyContact,
-          }}
+            designation: editingEmp.designation,
+          } as any}
           onClose={() => setEditingEmp(null)}
           onSaved={load}
         />

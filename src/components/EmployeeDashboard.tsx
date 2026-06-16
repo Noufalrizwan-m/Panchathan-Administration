@@ -17,8 +17,8 @@ interface Props {
 type Tab = 'today' | 'history' | 'profile';
 
 const TRANSPORT_ICONS: Record<string, React.ReactNode> = {
-  bike: <Bike size={14} />, truck: <Truck size={14} />, van: <Car size={14} />,
-  auto: <Navigation size={14} />, other: <Car size={14} />
+  bike: <Bike size={18} />, truck: <Truck size={18} />, van: <Car size={18} />,
+  auto: <Navigation size={18} />, other: <Car size={18} />
 };
 
 export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
@@ -33,6 +33,20 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   const [historyTrips, setHistoryTrips] = useState<Record<string, Trip[]>>({});
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+
+  // Live clock tick — re-renders every minute to keep office-hours checks fresh
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Office hours: 9:30 AM – 7:00 PM
+  const nowMin = (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
+  const OFFICE_START = 9 * 60 + 30;
+  const OFFICE_END   = 19 * 60;
+  const isOfficeTime = nowMin >= OFFICE_START && nowMin < OFFICE_END;
+  const canEndDay    = nowMin >= OFFICE_END;
 
   // Modals
   const [showDailyPlan, setShowDailyPlan] = useState(false);
@@ -82,7 +96,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   useEffect(() => {
     if (driver) {
       setProfileForm({
-        name: driver.name,
+        name: driver.fullName,
         phone: driver.phone || '',
         emergencyContact: driver.emergencyContact || '',
         address: driver.address || ''
@@ -200,72 +214,86 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col max-w-lg mx-auto">
+    <div className="min-h-screen bg-gray-50 flex flex-col">
       {/* Top Header */}
-      <div className="bg-white border-b border-gray-200 px-4 pt-4 pb-3 sticky top-0 z-20 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-lg">
-              {sessionUser.fullName.charAt(0).toUpperCase()}
-            </div>
-            <div>
-              <div className="font-bold text-gray-900 text-sm leading-tight">{sessionUser.fullName}</div>
-              <div className="text-xs text-gray-500">{driver?.employeeCode || sessionUser.username}</div>
+      <div className="bg-white border-b border-gray-200 px-4 sm:px-8 pt-3 pb-3 sticky top-0 z-20 shadow-sm">
+        <div className="max-w-4xl mx-auto flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <img
+              src="https://panchathanlogistics.com/logo.png"
+              alt="Panchathan Logistics"
+              className="h-11 sm:h-12 w-auto object-contain"
+            />
+            <div className="border-l-2 border-gray-200 pl-4">
+              <div className="font-bold text-gray-900 text-base leading-tight">{sessionUser.fullName}</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {driver?.designation && (
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-semibold">{driver.designation}</span>
+                )}
+                <span className="text-xs text-gray-500">{driver?.employeeCode || sessionUser.username}</span>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {workDay && !dayComplete && (
+            {workDay && !dayComplete && canEndDay && (
               <button
                 onClick={() => setShowEOD(true)}
-                className="flex items-center gap-1.5 bg-red-600 text-white text-xs font-semibold px-3 py-2 rounded-xl hover:bg-red-700 active:scale-95 transition-all"
+                className="flex items-center gap-2 bg-red-600 text-white text-sm font-semibold px-4 py-2.5 rounded-xl hover:bg-red-700 active:scale-95 transition-all"
               >
-                <StopCircle size={14} /> End Day
+                <StopCircle size={16} /> End Day
               </button>
             )}
-            <button onClick={onLogout} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-xl transition-colors">
+            {workDay && !dayComplete && !canEndDay && (
+              <div className="text-xs text-gray-400 text-right">
+                End Day available<br />after 7:00 PM
+              </div>
+            )}
+            <button onClick={onLogout} className="flex items-center gap-2 p-2.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors border border-gray-200">
               <LogOut size={18} />
             </button>
           </div>
         </div>
 
         {/* Work day status bar */}
+        <div className="max-w-4xl mx-auto">
         {workDay && !dayComplete && (
-          <div className="mt-3 flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-3 py-2">
+          <div className="mt-3 flex items-center gap-2 bg-green-50 border border-green-200 rounded-xl px-4 py-2.5">
             {TRANSPORT_ICONS[workDay.transportMode]}
-            <span className="text-xs font-semibold text-green-700 capitalize">{workDay.transportMode}</span>
-            {workDay.role && <span className="text-xs text-green-600">· {workDay.role}</span>}
-            <span className="text-xs text-green-500 ml-auto">Day started</span>
+            <span className="text-sm font-semibold text-green-700 capitalize">{workDay.transportMode}</span>
+            {workDay.role && <span className="text-sm text-green-600">· {workDay.role}</span>}
+            <span className="text-sm text-green-500 ml-auto">Day started</span>
           </div>
         )}
         {dayComplete && (
-          <div className="mt-3 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
-            <CheckCircle size={14} className="text-blue-600" />
-            <span className="text-xs font-semibold text-blue-700">Day completed and submitted</span>
+          <div className="mt-3 flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+            <CheckCircle size={16} className="text-blue-600" />
+            <span className="text-sm font-semibold text-blue-700">Day completed and submitted</span>
           </div>
         )}
 
         {/* Driver truck card — only for drivers */}
         {myVehicle && (
-          <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2 flex items-center gap-2">
-            <Truck size={14} className="text-blue-600 shrink-0" />
+          <div className="mt-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5 flex items-center gap-3">
+            <Truck size={18} className="text-blue-600 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-xs font-bold text-blue-800">{myVehicle.plate}</div>
-              <div className="text-xs text-blue-600 truncate">{myVehicle.make} {myVehicle.model} · Next svc: {myVehicle.nextService}</div>
+              <div className="text-sm font-bold text-blue-800">{myVehicle.plate}</div>
+              <div className="text-sm text-blue-600 truncate">{myVehicle.make} {myVehicle.model} · Next svc: {myVehicle.nextService}</div>
             </div>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${myVehicle.status === 'Idle' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+            <span className={`text-sm px-3 py-1 rounded-full font-medium ${myVehicle.status === 'Idle' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
               {myVehicle.status}
             </span>
           </div>
         )}
+        </div>
       </div>
 
       {/* Tab content */}
-      <div className="flex-1 overflow-y-auto pb-20">
+      <div className="flex-1 overflow-y-auto pb-24 max-w-4xl mx-auto w-full px-0 sm:px-4">
 
         {/* TODAY TAB */}
         {activeTab === 'today' && (
           <div className="p-4">
-            {!workDay && !dayComplete && (
+            {!workDay && !dayComplete && isOfficeTime && (
               <div className="text-center py-12">
                 <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
                   <Play size={32} className="text-blue-600 ml-1" />
@@ -278,6 +306,25 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                 >
                   Start My Day
                 </button>
+              </div>
+            )}
+
+            {!workDay && !dayComplete && !isOfficeTime && (
+              <div className="text-center py-12">
+                <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Clock size={32} className="text-gray-400" />
+                </div>
+                {nowMin < OFFICE_START ? (
+                  <>
+                    <h3 className="text-lg font-bold text-gray-700 mb-2">Office not open yet</h3>
+                    <p className="text-sm text-gray-400 max-w-xs mx-auto">Work day can be started from <span className="font-semibold text-gray-600">9:30 AM</span>. See you then!</p>
+                  </>
+                ) : (
+                  <>
+                    <h3 className="text-lg font-bold text-gray-700 mb-2">Office hours ended</h3>
+                    <p className="text-sm text-gray-400 max-w-xs mx-auto">New work day can be started tomorrow from <span className="font-semibold text-gray-600">9:30 AM</span>.</p>
+                  </>
+                )}
               </div>
             )}
 
@@ -436,8 +483,11 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
               <div className="w-20 h-20 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-3xl mx-auto mb-3">
                 {sessionUser.fullName.charAt(0).toUpperCase()}
               </div>
-              <div className="text-lg font-bold text-gray-900">{driver?.name || sessionUser.fullName}</div>
-              <div className="text-sm text-gray-500">{driver?.employeeCode || sessionUser.username}</div>
+              <div className="text-lg font-bold text-gray-900">{driver?.fullName || sessionUser.fullName}</div>
+              {driver?.designation && (
+                <span className="inline-block mt-1 text-xs bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full font-semibold">{driver.designation}</span>
+              )}
+              <div className="text-sm text-gray-500 mt-1">{driver?.employeeCode || sessionUser.username}</div>
               <div className="flex justify-center gap-3 mt-3">
                 <div className="text-center">
                   <div className="text-lg font-bold text-gray-800">{driver?.totalTrips || 0}</div>
@@ -466,7 +516,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   </button>
                 ) : (
                   <div className="flex gap-2">
-                    <button onClick={() => { setEditingProfile(false); if (driver) setProfileForm({ name: driver.name, phone: driver.phone || '', emergencyContact: driver.emergencyContact || '', address: driver.address || '' }); }} className="text-xs text-gray-500">
+                    <button onClick={() => { setEditingProfile(false); if (driver) setProfileForm({ name: driver.fullName, phone: driver.phone || '', emergencyContact: driver.emergencyContact || '', address: driver.address || '' }); }} className="text-xs text-gray-500">
                       <X size={16} />
                     </button>
                     <button onClick={handleSaveProfile} className="flex items-center gap-1 text-xs text-green-600 font-semibold">
@@ -508,9 +558,9 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
               <h3 className="text-sm font-bold text-gray-700 mb-4">Employment Info</h3>
               <div className="space-y-2">
                 {[
+                  ['Designation', driver?.designation],
                   ['License', driver?.licenseNumber],
-                  ['Experience', driver ? `${driver.experienceYears} years` : ''],
-                  ['Region', driver?.region],
+                  ['Location', [driver?.city, driver?.state].filter(Boolean).join(', ') || undefined],
                   ['Status', driver?.status],
                 ].map(([label, value]) => (
                   <div key={label} className="flex justify-between text-sm py-1 border-b border-gray-50">
@@ -525,26 +575,28 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
       </div>
 
       {/* Bottom Navigation */}
-      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 flex max-w-lg mx-auto">
+      <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-20 shadow-[0_-1px_4px_rgba(0,0,0,0.06)]">
+        <div className="max-w-4xl mx-auto flex">
         {([
-          { tab: 'today', icon: <ClipboardList size={20} />, label: 'Today' },
-          { tab: 'history', icon: <History size={20} />, label: 'History' },
-          { tab: 'profile', icon: <User size={20} />, label: 'Profile' },
+          { tab: 'today', icon: <ClipboardList size={22} />, label: 'Today' },
+          { tab: 'history', icon: <History size={22} />, label: 'History' },
+          { tab: 'profile', icon: <User size={22} />, label: 'Profile' },
         ] as { tab: Tab; icon: React.ReactNode; label: string }[]).map(item => (
           <button
             key={item.tab}
             onClick={() => setActiveTab(item.tab)}
-            className={`flex-1 flex flex-col items-center gap-1 py-3 text-xs font-medium transition-colors ${activeTab === item.tab ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
+            className={`flex-1 flex flex-col items-center gap-1 py-3.5 text-xs sm:text-sm font-semibold transition-colors relative ${activeTab === item.tab ? 'text-blue-600' : 'text-gray-400 hover:text-gray-600'}`}
           >
             {item.icon}
             {item.label}
             {item.tab === 'today' && ongoingToday.length > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[9px] rounded-full flex items-center justify-center">
+              <span className="absolute top-2 right-[calc(50%-18px)] w-4 h-4 bg-amber-500 text-white text-[9px] rounded-full flex items-center justify-center">
                 {ongoingToday.length}
               </span>
             )}
           </button>
         ))}
+        </div>
       </div>
 
       {/* Modals */}

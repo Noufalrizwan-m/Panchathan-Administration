@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
@@ -58,7 +59,7 @@ async function startServer() {
       const expected = user.password || (user.username === (process.env.ADMIN_USERNAME || 'admin') ? (process.env.ADMIN_PIN || '1234') : '');
       if (expected !== normPass) return res.status(401).json({ error: 'Incorrect username or password.' });
 
-      await db.logActivity(user.id, user.fullName, `Logged in as ${user.role}.`);
+      await db.logActivity(user.id, user.fullName, `${user.fullName} logged in`);
       return res.json({ success: true, user: publicUser(user) });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -86,24 +87,6 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/end-of-day-check', async (req, res) => {
-    const date = (req.query.date as string) || new Date().toISOString().slice(0, 10);
-    try {
-      const drivers = await db.getDrivers();
-      const result: any[] = [];
-      for (const d of drivers) {
-        const activeTrip = await db.getDriverActiveTrip(d.id);
-        const logs = await db.getLocationLogsForDriver(d.id, date);
-        if ((activeTrip && activeTrip.status !== 'Completed') || logs.length === 0) {
-          result.push({ driver: d, activeTrip: activeTrip || null, hasActivity: logs.length > 0 });
-        }
-      }
-      await db.logActivity('admin', 'System', `End-of-day check for ${date}: ${result.length} flagged`);
-      return res.json({ date, flagged: result });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
 
   // ----------------------------------------------------------------
   // FLEET / VEHICLES
@@ -200,35 +183,29 @@ async function startServer() {
       if (existing) return res.status(409).json({ error: 'Username already taken. Choose another.' });
 
       const id = d.id || 'EMP-' + Math.floor(1000 + Math.random() * 9000);
-      const newDriver = await db.saveDriver({
+      const newUser = await db.createUser({
         id,
-        name: d.name,
-        phone: d.phone || '',
-        emergencyContact: d.emergencyContact || '',
-        address: d.address || '',
-        employeeCode: d.employeeCode || id,
-        rating: 5.0,
-        licenseNumber: d.licenseNumber || ('DL' + Math.floor(100000 + Math.random() * 900000) + 'A'),
-        experienceYears: Number(d.experienceYears) || 0,
-        region: d.region || 'Central',
-        totalTrips: 0,
-        onTimeRate: 100.0,
-        fuelEfficiency: 0,
-        trend: 'stable',
-        status: 'Available',
-        avatar: d.avatar
-      });
-
-      await db.createUser({
         username,
         password: String(d.password).trim(),
         role: 'driver',
         fullName: d.name,
-        driverId: id
+        driverId: id,
+        phone: d.phone || '',
+        emergencyContact: d.emergencyContact || '',
+        address: d.address || '',
+        city: d.city || '',
+        state: d.state || '',
+        employeeCode: d.employeeCode || id,
+        licenseNumber: d.licenseNumber || ('DL' + Math.floor(100000 + Math.random() * 900000) + 'A'),
+        status: 'Available',
+        rating: 5.0,
+        totalTrips: 0,
+        onTimeRate: 100,
+        avatar: d.avatar
       });
 
       await db.logActivity('1', d.operatorName || 'Admin', `Created employee: ${d.name} (${username})`);
-      return res.json({ success: true, driver: newDriver });
+      return res.json({ success: true, driver: newUser });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -239,8 +216,10 @@ async function startServer() {
     try {
       const driver = await db.getDriverById(id);
       if (!driver) return res.status(404).json({ error: 'Employee not found.' });
-      const updated = await db.saveDriver({ ...driver, ...req.body });
-      await db.logActivity('admin', req.body.operatorName || 'Admin', `Updated employee: ${updated.name}`);
+      const { name, operatorName, ...rest } = req.body;
+      const updates = { ...rest, ...(name ? { fullName: name } : {}) };
+      const updated = await db.saveDriver({ ...driver, ...updates });
+      await db.logActivity('admin', operatorName || 'Admin', `Updated employee: ${updated.fullName}`);
       return res.json({ success: true, driver: updated });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -251,37 +230,8 @@ async function startServer() {
     const { id } = req.params;
     try {
       await db.deleteDriver(id);
-      // also delete user account linked to this driver
-      const users = await db.getUsers();
-      const userToDelete = users.find(u => u.driverId === id);
-      if (userToDelete) await db.deleteUser(userToDelete.username);
       await db.logActivity('admin', 'Admin', `Deleted employee ${id}`);
       return res.json({ success: true });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.post('/api/drivers/:driverId/location', async (req, res) => {
-    const { driverId } = req.params;
-    const { latitude, longitude, address, timestamp, isOfficeTime, userId, note } = req.body;
-    if (latitude === undefined || longitude === undefined) return res.status(400).json({ error: 'Coordinates required.' });
-    try {
-      const driver = await db.getDriverById(driverId);
-      if (!driver) return res.status(404).json({ error: 'Employee not found.' });
-      const log = await db.saveLocationLog({ userId: userId || 'system', driverId, latitude: Number(latitude), longitude: Number(longitude), address: address || '', timestamp: timestamp || new Date().toISOString(), isOfficeTime: !!isOfficeTime, note: note || '' });
-      return res.json({ success: true, log });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
-  });
-
-  app.get('/api/drivers/:driverId/locations', async (req, res) => {
-    const { driverId } = req.params;
-    const date = req.query.date as string | undefined;
-    try {
-      const logs = await db.getLocationLogsForDriver(driverId, date);
-      return res.json({ logs });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -327,7 +277,6 @@ async function startServer() {
       const tripId = 'TRIP-' + Math.floor(1000 + Math.random() * 9000);
       const newTrip: Trip = {
         id: tripId,
-        truckId: d.truckId || 'DRIVER-SELECT',
         driverId: d.driverId,
         coPassengerId: d.coPassengerId,
         origin: d.origin,
@@ -343,14 +292,6 @@ async function startServer() {
         pickupNotes: d.pickupNotes || '',
         deliveryNotes: d.deliveryNotes || '',
         proofPhotos: [],
-        manifest: d.manifest || [],
-        telematics: {
-          speed: 0,
-          fuelLevel: 100,
-          engineTemp: 0,
-          tirePressure: { frontLeft: 32, frontRight: 32, rearLeft: 32, rearRight: 32 },
-          location: { latitude: 0, longitude: 0, address: d.origin }
-        },
         lastUpdated: new Date().toISOString()
       };
       const created = await db.saveTrip(newTrip);
@@ -368,43 +309,24 @@ async function startServer() {
       const trip = await db.getTripById(id);
       if (!trip) return res.status(404).json({ error: 'Trip not found.' });
 
-      const loc = update.location || {};
-      const newTelematics = {
-        speed: Number(update.speed !== undefined ? update.speed : trip.telematics.speed),
-        fuelLevel: Number(update.fuelLevel !== undefined ? update.fuelLevel : trip.telematics.fuelLevel),
-        engineTemp: Number(update.engineTemp !== undefined ? update.engineTemp : trip.telematics.engineTemp),
-        tirePressure: update.tirePressure || trip.telematics.tirePressure,
-        location: {
-          latitude: Number(loc.latitude !== undefined ? loc.latitude : trip.telematics.location.latitude),
-          longitude: Number(loc.longitude !== undefined ? loc.longitude : trip.telematics.location.longitude),
-          address: loc.address || trip.telematics.location.address
-        }
-      };
-
       const newStatus = update.status || trip.status;
       const newTaskStage = newStatus === 'Completed' ? 'Completed' : newStatus === 'Incomplete' ? 'Incomplete' : newStatus === 'In Progress' ? 'Ongoing' : 'Upcoming';
 
       const updatedTrip = await db.saveTrip({
         ...trip,
-        telematics: newTelematics,
         status: newStatus,
         taskStage: newTaskStage,
-        selectedVehicleType: update.selectedVehicleType !== undefined ? update.selectedVehicleType : trip.selectedVehicleType,
-        selectedVehicleRole: update.selectedVehicleRole !== undefined ? update.selectedVehicleRole : trip.selectedVehicleRole,
-        selectedVehicleId: update.selectedVehicleId !== undefined ? update.selectedVehicleId : trip.selectedVehicleId,
         lastUpdated: new Date().toISOString()
       });
 
       if (update.status === 'In Progress' && trip.status !== 'In Progress') {
         const d = await db.getDriverById(trip.driverId);
         if (d) await db.saveDriver({ ...d, status: 'Active' });
-        await db.logActivity('driver', update.operatorName || 'Employee', `Started task ${trip.id}`);
       }
 
       if (update.status === 'Completed' || update.status === 'Incomplete') {
         const d = await db.getDriverById(trip.driverId);
-        if (d) await db.saveDriver({ ...d, status: 'Available', totalTrips: d.totalTrips + (update.status === 'Completed' ? 1 : 0) });
-        await db.logActivity('driver', update.operatorName || 'Employee', `${update.status} task ${trip.id}`);
+        if (d) await db.saveDriver({ ...d, status: 'Available', totalTrips: (d.totalTrips || 0) + (update.status === 'Completed' ? 1 : 0) });
       }
 
       return res.json({ success: true, trip: updatedTrip });
@@ -426,12 +348,12 @@ async function startServer() {
       let photoRecord: any = null;
       if ((req as any).file) {
         const file = (req as any).file;
-        photoRecord = { kind, fileName: file.originalname, uploadedBy: req.body.uploadedBy || 'driver', filePath: path.relative(process.cwd(), file.path), uploadedAt: new Date().toISOString(), location: trip.telematics.location };
+        photoRecord = { kind, fileName: file.originalname, uploadedBy: req.body.uploadedBy || 'driver', filePath: path.relative(process.cwd(), file.path), uploadedAt: new Date().toISOString() };
       } else if (req.body.dataUrl) {
         const dataUrl = String(req.body.dataUrl);
         const approxBytes = Math.ceil(((dataUrl.split(',')[1] || '').length * 3) / 4);
         if (approxBytes > 10 * 1024 * 1024) return res.status(413).json({ error: 'Image too large. Max 10 MB.' });
-        photoRecord = { kind, fileName: String(req.body.fileName || `photo-${Date.now()}.jpg`), uploadedBy: req.body.uploadedBy || 'driver', dataUrl, uploadedAt: new Date().toISOString(), location: trip.telematics.location };
+        photoRecord = { kind, fileName: String(req.body.fileName || `photo-${Date.now()}.jpg`), uploadedBy: req.body.uploadedBy || 'driver', dataUrl, uploadedAt: new Date().toISOString() };
       } else {
         return res.status(400).json({ error: 'No photo or dataUrl provided.' });
       }
@@ -482,9 +404,9 @@ async function startServer() {
       if (workDay.role === 'co-passenger' && workDay.partnerId) {
         const partnerUser = await db.findUserById(workDay.partnerId);
         const partnerDriverId = partnerUser?.driverId || workDay.partnerId;
-        trips = await db.getTripsByEmployee(partnerDriverId);
+        trips = await db.getTripsByDriver(partnerDriverId);
       } else if (targetDriverId) {
-        trips = await db.getTripsByEmployee(targetDriverId);
+        trips = await db.getTripsByDriver(targetDriverId);
       }
 
       return res.json({ workDay, trips });
@@ -506,8 +428,8 @@ async function startServer() {
 
   app.post('/api/workday', async (req, res) => {
     const d = req.body;
-    if (!d.userId || !d.employeeId || !d.transportMode || !d.startLocation) {
-      return res.status(400).json({ error: 'userId, employeeId, transportMode, and startLocation are required.' });
+    if (!d.userId || !d.transportMode || !d.startLocation) {
+      return res.status(400).json({ error: 'userId, transportMode, and startLocation are required.' });
     }
     const date = new Date().toISOString().slice(0, 10);
     try {
@@ -520,7 +442,6 @@ async function startServer() {
       }
       const newWorkDay: WorkDay = {
         id: 'WD-' + Math.random().toString(36).substr(2, 9),
-        employeeId: d.employeeId,
         userId: d.userId,
         date,
         transportMode: d.transportMode,
@@ -610,7 +531,6 @@ async function startServer() {
     try {
       const user = await db.findUserByUsername(username);
       if (!user) return res.status(404).json({ error: 'User not found.' });
-      if (user.driverId) await db.deleteDriver(user.driverId);
       await db.deleteUser(username);
       await db.logActivity('admin', 'Admin', `Deleted employee account: ${username}`);
       return res.json({ success: true });

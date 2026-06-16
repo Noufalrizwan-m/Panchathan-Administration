@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Loader, Bike, Truck, Car, Navigation, CheckSquare, Square, User2, Users } from 'lucide-react';
+import { X, MapPin, Loader, Bike, Truck, Car, Navigation, CheckSquare, Square, User2, Users, CheckCircle } from 'lucide-react';
 import { Trip, Vehicle, Driver, WorkDay } from '../types';
 
 interface DailyPlanModalProps {
@@ -15,12 +15,12 @@ interface DailyPlanModalProps {
 
 type TransportMode = 'bike' | 'auto' | 'van' | 'truck' | 'other';
 
-const TRANSPORT_OPTIONS: { mode: TransportMode; label: string; icon: React.ReactNode }[] = [
-  { mode: 'bike',  label: 'Bike',  icon: <Bike size={22} /> },
-  { mode: 'truck', label: 'Truck', icon: <Truck size={22} /> },
-  { mode: 'van',   label: 'Van',   icon: <Car size={22} /> },
-  { mode: 'auto',  label: 'Auto',  icon: <Navigation size={22} /> },
-  { mode: 'other', label: 'Other', icon: <Car size={22} /> },
+const TRANSPORT_OPTIONS: { mode: TransportMode; label: string; icon: React.ReactNode; bigIcon: React.ReactNode }[] = [
+  { mode: 'bike',  label: 'Bike',  icon: <Bike size={22} />,       bigIcon: <Bike size={40} /> },
+  { mode: 'truck', label: 'Truck', icon: <Truck size={22} />,      bigIcon: <Truck size={40} /> },
+  { mode: 'van',   label: 'Van',   icon: <Car size={22} />,        bigIcon: <Car size={40} /> },
+  { mode: 'auto',  label: 'Auto',  icon: <Navigation size={22} />, bigIcon: <Navigation size={40} /> },
+  { mode: 'other', label: 'Other', icon: <Car size={22} />,        bigIcon: <Car size={40} /> },
 ];
 
 function getCurrentTimeISO(): string {
@@ -164,19 +164,35 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
           {/* STEP 2: Truck role (only if truck selected) */}
           {step === 2 && transport === 'truck' && (
             <div className="space-y-4">
-              <h3 className="text-sm font-semibold text-gray-700">Your role in the truck?</h3>
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="w-10 h-10 rounded-full bg-gray-800 flex items-center justify-center text-white"><Truck size={20} /></div>
+                <div>
+                  <div className="text-sm font-bold text-gray-800">Truck</div>
+                  <div className="text-xs text-gray-500">Selected transport</div>
+                </div>
+                <CheckCircle size={18} className="text-green-500 ml-auto" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-700">What is your role in the truck?</h3>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   onClick={() => setRole('driver')}
-                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-sm font-medium transition-all active:scale-95 ${role === 'driver' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                  className={`flex flex-col items-center gap-3 p-5 rounded-2xl border-2 text-sm font-semibold transition-all active:scale-95 ${role === 'driver' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
                 >
-                  <User2 size={24} /> Driver
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${role === 'driver' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                    <User2 size={24} />
+                  </div>
+                  Driver
+                  {role === 'driver' && <span className="text-xs text-blue-500 font-normal">Selected</span>}
                 </button>
                 <button
                   onClick={() => setRole('co-passenger')}
-                  className={`flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-sm font-medium transition-all active:scale-95 ${role === 'co-passenger' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                  className={`flex flex-col items-center gap-3 p-5 rounded-2xl border-2 text-sm font-semibold transition-all active:scale-95 ${role === 'co-passenger' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
                 >
-                  <Users size={24} /> Co-Passenger
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${role === 'co-passenger' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                    <Users size={24} />
+                  </div>
+                  Co-Passenger
+                  {role === 'co-passenger' && <span className="text-xs text-blue-500 font-normal">Selected</span>}
                 </button>
               </div>
 
@@ -216,7 +232,7 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
                       >
                         <div className="flex justify-between items-center">
                           <div>
-                            <div className="font-semibold text-sm text-gray-800">{d.name}</div>
+                            <div className="font-semibold text-sm text-gray-800">{d.fullName}</div>
                             <div className="text-xs text-gray-500">{d.employeeCode || d.id}</div>
                           </div>
                           <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${d.status === 'Available' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{d.status}</span>
@@ -229,15 +245,27 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
             </div>
           )}
 
-          {/* STEP 2 for non-truck — skip to next */}
-          {step === 2 && transport !== 'truck' && (
-            <div className="text-center py-6">
-              <div className="text-4xl mb-3">
-                {transport === 'bike' ? '🛵' : transport === 'van' ? '🚐' : transport === 'auto' ? '🛺' : '🚗'}
+          {/* STEP 2 for non-truck — show selection confirmation */}
+          {step === 2 && transport !== 'truck' && (() => {
+            const opt = TRANSPORT_OPTIONS.find(o => o.mode === transport);
+            return (
+              <div>
+                <h3 className="text-sm font-semibold text-gray-700 mb-4">Your transport for today</h3>
+                <div className="flex flex-col items-center py-8 gap-4 rounded-2xl bg-blue-50 border-2 border-blue-300">
+                  <div className="w-24 h-24 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-lg shadow-blue-200">
+                    {opt?.bigIcon}
+                  </div>
+                  <div className="text-center">
+                    <div className="text-3xl font-black text-blue-800 capitalize">{opt?.label || transport}</div>
+                    <div className="text-sm text-blue-500 mt-1">Selected mode</div>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-green-700 font-semibold bg-green-100 px-4 py-2 rounded-full">
+                    <CheckCircle size={16} /> Confirmed
+                  </div>
+                </div>
               </div>
-              <p className="text-gray-600 text-sm">Ready to go with your {transport}. Let's confirm your location next.</p>
-            </div>
-          )}
+            );
+          })()}
 
           {/* STEP 3: Location + time */}
           {step === 3 && (
