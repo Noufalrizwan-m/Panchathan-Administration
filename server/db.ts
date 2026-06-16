@@ -29,6 +29,8 @@ const UserSchema = new mongoose.Schema<User>({
   employeeCode:    { type: String },
   licenseNumber:   { type: String },
   designation:     { type: String },  // job title assigned by admin
+  shiftStart:      { type: String },  // HH:MM shift start, e.g. "09:30"
+  shiftEnd:        { type: String },  // HH:MM shift end, e.g. "19:00"
   status:          { type: String, enum: ['Available', 'Active', 'On Leave'] },
   rating:          { type: Number },
   totalTrips:      { type: Number, default: 0 },

@@ -18,6 +18,8 @@ export interface User {
   employeeCode?: string;
   licenseNumber?: string;
   designation?: string;   // job title set by admin — e.g. "Executive", "Delivery Associate"
+  shiftStart?: string;    // HH:MM — e.g. "09:30" — set by admin per employee
+  shiftEnd?: string;      // HH:MM — e.g. "19:00"
   status?: 'Available' | 'Active' | 'On Leave';
   rating?: number;
   totalTrips?: number;

@@ -3,7 +3,7 @@ import {
   Users, Truck, ClipboardList, Activity, Plus, Search, Edit, Trash2, X, Save,
   CheckCircle, AlertCircle, Package, LogOut, RefreshCw,
   ChevronDown, ChevronRight, ChevronUp, Eye, Camera, Loader, Shield,
-  Building2, Star, Award, Filter, Phone, MapPin
+  Building2, Star, Award, Filter, Phone, MapPin, Clock
 } from 'lucide-react';
 import { User as UserType, Vehicle, Driver, Trip, ActivityLog } from '../types';
 
@@ -54,6 +54,7 @@ interface EmpForm {
   name: string; username: string; password: string; phone: string;
   employeeCode: string; city: string; state: string; licenseNumber: string;
   emergencyContact: string; designation: string;
+  shiftStart: string; shiftEnd: string;
 }
 
 function EmployeeFormModal({
@@ -75,6 +76,8 @@ function EmployeeFormModal({
     licenseNumber: initial?.licenseNumber || '',
     emergencyContact: initial?.emergencyContact || '',
     designation: (initial as any)?.designation || '',
+    shiftStart:  (initial as any)?.shiftStart  || '09:30',
+    shiftEnd:    (initial as any)?.shiftEnd    || '19:00',
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -101,7 +104,7 @@ function EmployeeFormModal({
         const patchRes = await fetch(`/api/drivers/${initial.id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: form.name, phone: form.phone, emergencyContact: form.emergencyContact, city: form.city, state: form.state, licenseNumber: form.licenseNumber, designation: form.designation, operatorName: 'Admin' }),
+          body: JSON.stringify({ name: form.name, phone: form.phone, emergencyContact: form.emergencyContact, city: form.city, state: form.state, licenseNumber: form.licenseNumber, designation: form.designation, shiftStart: form.shiftStart, shiftEnd: form.shiftEnd, operatorName: 'Admin' }),
         });
         if (!patchRes.ok) { const d = await patchRes.json(); throw new Error(d.error); }
         if (form.password && initial.username) {
@@ -142,6 +145,14 @@ function EmployeeFormModal({
                 <option value="">Select designation…</option>
                 {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Shift Start</label>
+              <input type="time" value={form.shiftStart} onChange={e => set('shiftStart', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-gray-600 block mb-1">Shift End</label>
+              <input type="time" value={form.shiftEnd} onChange={e => set('shiftEnd', e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
             </div>
             <div>
               <label className="text-xs font-medium text-gray-600 block mb-1">Username <span className="text-red-500">*</span></label>
@@ -240,7 +251,6 @@ function TaskDispatchModal({
     try {
       const payload = {
         driverId: form.driverId,
-        truckId: 'DRIVER-SELECT',
         customerName: form.customerName,
         taskType: form.taskType,
         origin: form.origin,
@@ -548,14 +558,31 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
     (userMap[d.id]?.username || '').toLowerCase().includes(search.toLowerCase())
   );
 
-  const pendingTrips = trips.filter(t => t.status !== 'Completed' && t.status !== 'Incomplete');
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  const pendingTrips = trips.filter(t => t.status !== 'Completed');
   const completedTrips = trips.filter(t => t.status === 'Completed');
   const incompleteTrips = trips.filter(t => t.status === 'Incomplete');
+
+  // Today's stats
+  const completedToday = completedTrips.filter(t => t.lastUpdated.startsWith(todayStr));
+  const pickupsDoneToday = completedToday.filter(t => t.taskType === 'PICKUP' || t.taskType === 'BOTH').length;
+  const deliveriesDoneToday = completedToday.filter(t => t.taskType === 'DELIVERY' || t.taskType === 'BOTH').length;
+  const pendingPickups = pendingTrips.filter(t => t.taskType === 'PICKUP' || t.taskType === 'BOTH').length;
+  const pendingDeliveries = pendingTrips.filter(t => t.taskType === 'DELIVERY' || t.taskType === 'BOTH').length;
+
+  // Per-employee pending breakdown
+  const pendingByEmployee = drivers.map(d => ({
+    driver: d,
+    tasks: pendingTrips.filter(t => t.driverId === d.id),
+  })).filter(e => e.tasks.length > 0);
 
   // Customer filter helpers
   const allCustomers = [...new Set(trips.map(t => t.customerName).filter(Boolean))] as string[];
 
-  const filteredActiveTasks = pendingTrips.filter(t => {
+  // Active Tasks list = pending only (not Incomplete — those show in their own section below)
+  const filteredActiveTasks = trips.filter(t => {
+    if (t.status === 'Completed' || t.status === 'Incomplete') return false;
     if (customerFilter && t.customerName !== customerFilter) return false;
     if (taskSearch) {
       const q = taskSearch.toLowerCase();
@@ -757,6 +784,13 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                         <div className="border-t border-gray-100 px-4 py-3 space-y-3">
                           <div className="grid grid-cols-2 gap-x-6 gap-y-2.5">
                             <div>
+                              <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Shift Hours</div>
+                              <div className="text-xs font-semibold text-gray-700 mt-0.5 flex items-center gap-1">
+                                <Clock size={10} className="text-emerald-600" />
+                                {driver.shiftStart || '09:30'} – {driver.shiftEnd || '19:00'}
+                              </div>
+                            </div>
+                            <div>
                               <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">License</div>
                               <div className="text-xs font-mono font-semibold text-gray-700 mt-0.5">{driver.licenseNumber || '—'}</div>
                             </div>
@@ -930,6 +964,102 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
         {/* ══════════════ TASKS TAB ══════════════ */}
         {activeTab === 'tasks' && (
           <div>
+
+            {/* ── TODAY'S SCORE ── */}
+            <div className="mb-5">
+              <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Today's Overview</div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="bg-amber-50 border border-amber-100 rounded-2xl p-3 text-center">
+                  <div className="text-2xl font-black text-amber-600">{pendingTrips.length}</div>
+                  <div className="text-[10px] font-semibold text-amber-700 mt-0.5">Pending Tasks</div>
+                  <div className="text-[10px] text-amber-500 mt-0.5">{pendingPickups}P · {pendingDeliveries}D</div>
+                </div>
+                <div className="bg-blue-50 border border-blue-100 rounded-2xl p-3 text-center">
+                  <div className="text-2xl font-black text-blue-600">{pickupsDoneToday}</div>
+                  <div className="text-[10px] font-semibold text-blue-700 mt-0.5">Pickups Done</div>
+                  <div className="text-[10px] text-blue-400 mt-0.5">today</div>
+                </div>
+                <div className="bg-green-50 border border-green-100 rounded-2xl p-3 text-center">
+                  <div className="text-2xl font-black text-green-600">{deliveriesDoneToday}</div>
+                  <div className="text-[10px] font-semibold text-green-700 mt-0.5">Deliveries Done</div>
+                  <div className="text-[10px] text-green-400 mt-0.5">today</div>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3 text-center">
+                  <div className="text-2xl font-black text-emerald-600">{completedToday.length}</div>
+                  <div className="text-[10px] font-semibold text-emerald-700 mt-0.5">Total Done</div>
+                  <div className="text-[10px] text-emerald-400 mt-0.5">today</div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── EMPLOYEE CHECKLIST ── */}
+            {pendingByEmployee.length > 0 && (
+              <div className="mb-5">
+                <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Who Has Pending Tasks</div>
+                <div className="space-y-2">
+                  {pendingByEmployee.map(({ driver, tasks }) => {
+                    const isOpen = expandedEmployee === ('chk-' + driver.id);
+                    return (
+                      <div key={driver.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                        <button
+                          className="w-full flex items-center gap-3 p-3 text-left"
+                          onClick={() => setExpandedEmployee(isOpen ? null : ('chk-' + driver.id))}
+                        >
+                          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
+                            {(driver.fullName || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-gray-800 text-sm leading-tight">{driver.fullName}</div>
+                            {driver.designation && <div className="text-[10px] text-emerald-600 font-medium">{driver.designation}</div>}
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {tasks.filter(t => t.status === 'Incomplete').length > 0 && (
+                              <span className="text-xs font-bold text-red-600 bg-red-50 border border-red-200 px-2 py-0.5 rounded-full">
+                                {tasks.filter(t => t.status === 'Incomplete').length} incomplete
+                              </span>
+                            )}
+                            {tasks.filter(t => t.status !== 'Incomplete').length > 0 && (
+                              <span className="text-xs font-bold text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                                {tasks.filter(t => t.status !== 'Incomplete').length} pending
+                              </span>
+                            )}
+                            <ChevronRight size={14} className={`text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`} />
+                          </div>
+                        </button>
+                        {isOpen && (
+                          <div className="border-t border-gray-100 divide-y divide-gray-50">
+                            {tasks.map(t => (
+                              <div key={t.id} className="flex items-center gap-3 px-4 py-2.5">
+                                <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${
+                                  t.taskType === 'DELIVERY' ? 'bg-green-100 text-green-700' :
+                                  t.taskType === 'BOTH'     ? 'bg-purple-100 text-purple-700' :
+                                                              'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {t.taskType === 'BOTH' ? 'P+D' : t.taskType || 'PICKUP'}
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="text-xs font-medium text-gray-700 truncate">{t.origin}</div>
+                                  {t.customerName && <div className="text-[10px] text-purple-600">{t.customerName}</div>}
+                                  {t.courierName && <div className="text-[10px] text-gray-400">{t.courierName}{t.podNumber ? ` #${t.podNumber}` : ''}</div>}
+                                </div>
+                                <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded-full font-semibold ${
+                                  t.status === 'Incomplete'   ? 'bg-red-100 text-red-700' :
+                                  t.taskStage === 'Ongoing'  ? 'bg-amber-100 text-amber-700' :
+                                                               'bg-gray-100 text-gray-500'
+                                }`}>
+                                  {t.status === 'Incomplete' ? 'Incomplete' : t.taskStage === 'Ongoing' ? 'In Progress' : 'Not Started'}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Top controls */}
             <div className="flex flex-col sm:flex-row gap-2 mb-4">
               <div className="flex-1 relative">
@@ -1229,6 +1359,8 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
             licenseNumber: editingEmp.licenseNumber,
             emergencyContact: editingEmp.emergencyContact,
             designation: editingEmp.designation,
+            shiftStart:  editingEmp.shiftStart,
+            shiftEnd:    editingEmp.shiftEnd,
           } as any}
           onClose={() => setEditingEmp(null)}
           onSaved={load}

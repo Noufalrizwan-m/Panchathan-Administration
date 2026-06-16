@@ -41,10 +41,11 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
     return () => clearInterval(id);
   }, []);
 
-  // Office hours: 9:30 AM – 7:00 PM
-  const nowMin = (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
-  const OFFICE_START = 9 * 60 + 30;
-  const OFFICE_END   = 19 * 60;
+  // Per-employee shift hours (admin-configurable, default 9:30–19:00)
+  const parseShiftTime = (t: string) => { const [h, m] = t.split(':').map(Number); return h * 60 + (m || 0); };
+  const nowMin       = (() => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
+  const OFFICE_START = parseShiftTime(sessionUser.shiftStart || '09:30');
+  const OFFICE_END   = parseShiftTime(sessionUser.shiftEnd   || '19:00');
   const isOfficeTime = nowMin >= OFFICE_START && nowMin < OFFICE_END;
   const canEndDay    = nowMin >= OFFICE_END;
 
@@ -59,7 +60,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   // History expand
   const [expandedHistory, setExpandedHistory] = useState<string | null>(null);
 
-  const driverId = sessionUser.driverId || '';
+  const driverId = sessionUser.driverId || sessionUser.id || '';
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,7 +84,8 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
       setVehicles(vehiclesData.vehicles || []);
       setAllAssignedTrips(tripsData.trips || []);
       setWorkDay(workDayData.workDay || null);
-      setTodayTrips(workDayData.trips || tripsData.trips || []);
+      const wdTrips: Trip[] = workDayData.trips || [];
+      setTodayTrips(wdTrips.length > 0 ? wdTrips : (tripsData.trips || []));
     } catch (err) {
       console.error('Load error', err);
     } finally {
@@ -201,6 +203,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   const incompleteToday = todayTrips.filter(t => t.taskStage === 'Incomplete');
 
   const dayComplete = workDay?.eodSubmitted;
+  const isLate = !workDay && !dayComplete && nowMin > OFFICE_START + 15 && nowMin < OFFICE_END;
 
   if (loading) {
     return (
@@ -293,6 +296,59 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
         {/* TODAY TAB */}
         {activeTab === 'today' && (
           <div className="p-4">
+
+            {/* ── COMPLETION SCORE ── */}
+            {todayTrips.length > 0 && (() => {
+              const done = completedToday.length;
+              const total = todayTrips.length;
+              const pct = Math.round((done / total) * 100);
+              return (
+                <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-xs font-bold text-gray-600">Today's Progress</span>
+                    <span className={`text-xs font-bold ${pct === 100 ? 'text-emerald-600' : pct >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>
+                      {done}/{total} done · {pct}%
+                    </span>
+                  </div>
+                  <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${pct === 100 ? 'bg-emerald-500' : pct >= 50 ? 'bg-blue-500' : 'bg-amber-400'}`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 mt-3 text-center">
+                    <div>
+                      <div className="text-sm font-black text-blue-600">{upcomingToday.length}</div>
+                      <div className="text-[10px] text-gray-400">Upcoming</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-black text-amber-600">{ongoingToday.length}</div>
+                      <div className="text-[10px] text-gray-400">In Progress</div>
+                    </div>
+                    <div>
+                      <div className="text-sm font-black text-emerald-600">{done}</div>
+                      <div className="text-[10px] text-gray-400">Done</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* Late reminder banner */}
+            {isLate && (
+              <div className="bg-red-50 border border-red-200 rounded-2xl p-4 mb-4 flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-red-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <AlertCircle size={18} className="text-red-600" />
+                </div>
+                <div className="flex-1">
+                  <div className="font-bold text-red-700 text-sm">You're running late!</div>
+                  <div className="text-xs text-red-500 mt-0.5">
+                    Your shift started at <span className="font-semibold">{sessionUser.shiftStart || '09:30'}</span>. Please start your work day as soon as possible.
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!workDay && !dayComplete && isOfficeTime && (
               <div className="text-center py-12">
                 <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -316,13 +372,13 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                 </div>
                 {nowMin < OFFICE_START ? (
                   <>
-                    <h3 className="text-lg font-bold text-gray-700 mb-2">Office not open yet</h3>
-                    <p className="text-sm text-gray-400 max-w-xs mx-auto">Work day can be started from <span className="font-semibold text-gray-600">9:30 AM</span>. See you then!</p>
+                    <h3 className="text-lg font-bold text-gray-700 mb-2">Shift hasn't started yet</h3>
+                    <p className="text-sm text-gray-400 max-w-xs mx-auto">Your shift starts at <span className="font-semibold text-gray-600">{sessionUser.shiftStart || '09:30'}</span>. See you then!</p>
                   </>
                 ) : (
                   <>
-                    <h3 className="text-lg font-bold text-gray-700 mb-2">Office hours ended</h3>
-                    <p className="text-sm text-gray-400 max-w-xs mx-auto">New work day can be started tomorrow from <span className="font-semibold text-gray-600">9:30 AM</span>.</p>
+                    <h3 className="text-lg font-bold text-gray-700 mb-2">Shift ended</h3>
+                    <p className="text-sm text-gray-400 max-w-xs mx-auto">Your shift ended at <span className="font-semibold text-gray-600">{sessionUser.shiftEnd || '19:00'}</span>. See you tomorrow!</p>
                   </>
                 )}
               </div>
@@ -559,6 +615,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
               <div className="space-y-2">
                 {[
                   ['Designation', driver?.designation],
+                  ['Shift Hours', `${sessionUser.shiftStart || '09:30'} – ${sessionUser.shiftEnd || '19:00'}`],
                   ['License', driver?.licenseNumber],
                   ['Location', [driver?.city, driver?.state].filter(Boolean).join(', ') || undefined],
                   ['Status', driver?.status],
