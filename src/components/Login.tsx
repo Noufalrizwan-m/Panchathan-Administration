@@ -1,16 +1,12 @@
 import React, { useState } from 'react';
-import { Lock, ArrowRight, AlertTriangle, User as UserIcon, Shield, Truck } from 'lucide-react';
+import { Lock, ArrowRight, AlertTriangle, User as UserIcon } from 'lucide-react';
 import { User } from '../types';
-import { PanchathanLogo } from './BrandAssets';
 
 interface LoginProps {
   onLoginSuccess: (user: User) => void;
 }
 
-type RoleTab = 'admin' | 'employee';
-
 export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const [role, setRole] = useState<RoleTab>('employee');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -31,7 +27,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password: password.trim() })
+        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
       });
 
       if (!response.ok) {
@@ -52,26 +48,22 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleRoleSwitch = (newRole: RoleTab) => {
-    setRole(newRole);
-    setError('');
-    setUsername('');
-    setPassword('');
-  };
-
   return (
     <div className="min-h-screen flex bg-white">
 
       {/* LEFT PANEL — Branding */}
       <div className="hidden lg:flex lg:w-1/2 bg-[#0f3d20] flex-col justify-between p-10 relative overflow-hidden">
-        {/* Background decoration */}
         <div className="absolute inset-0 opacity-10">
           <div className="absolute top-0 right-0 w-96 h-96 bg-white rounded-full -translate-y-1/2 translate-x-1/2" />
           <div className="absolute bottom-0 left-0 w-64 h-64 bg-[#f9a825] rounded-full translate-y-1/2 -translate-x-1/2" />
         </div>
 
         <div className="relative z-10">
-          <PanchathanLogo size="md" />
+          <img
+            src="https://panchathanlogistics.com/logo.png"
+            alt="Panchathan Logistics"
+            className="h-14 w-auto object-contain"
+          />
         </div>
 
         <div className="relative z-10 space-y-6">
@@ -101,7 +93,7 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         </div>
 
         <div className="relative z-10 text-emerald-400 text-[11px]">
-          © {new Date().getFullYear()} Panchathan Logistics
+          © {new Date().getFullYear()} Panchathan Logistics Private Limited
         </div>
       </div>
 
@@ -109,54 +101,19 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       <div className="flex-1 flex items-center justify-center p-6 bg-slate-50">
         <div className="w-full max-w-md">
 
-          {/* Mobile logo */}
-          <div className="lg:hidden mb-8 text-center">
-            <PanchathanLogo size="sm" />
+          {/* Logo */}
+          <div className="flex flex-col items-center mb-8">
+            <img
+              src="https://panchathanlogistics.com/logo.png"
+              alt="Panchathan Logistics"
+              className="h-16 w-auto object-contain mb-3"
+            />
+            <p className="text-slate-500 text-sm text-center">One Stop For All Your Courier and Cargo Needs.</p>
           </div>
 
           <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
             <h2 className="text-xl font-bold text-slate-800 mb-1">Welcome back</h2>
             <p className="text-slate-500 text-sm mb-6">Sign in to your account</p>
-
-            {/* Role Tabs */}
-            <div className="flex bg-slate-100 rounded-xl p-1 mb-6">
-              <button
-                type="button"
-                onClick={() => handleRoleSwitch('employee')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  role === 'employee'
-                    ? 'bg-white text-[#0f3d20] shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <Truck className="w-4 h-4" />
-                Employee
-              </button>
-              <button
-                type="button"
-                onClick={() => handleRoleSwitch('admin')}
-                className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
-                  role === 'admin'
-                    ? 'bg-white text-[#0f3d20] shadow-sm'
-                    : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <Shield className="w-4 h-4" />
-                Admin
-              </button>
-            </div>
-
-            {/* Role hint */}
-            <div className={`flex items-center gap-2 p-3 rounded-lg mb-5 text-xs ${
-              role === 'admin'
-                ? 'bg-amber-50 border border-amber-200 text-amber-800'
-                : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-            }`}>
-              {role === 'admin'
-                ? <><Shield className="w-3.5 h-3.5 shrink-0" /> Admin access — full dashboard, employee &amp; vehicle management</>
-                : <><Truck className="w-3.5 h-3.5 shrink-0" /> Employee access — your tasks, delivery flow &amp; location tracking</>
-              }
-            </div>
 
             {/* Error */}
             {error && (
@@ -169,31 +126,28 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             {/* Form */}
             <form onSubmit={handleLogin} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Username
-                </label>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Username</label>
                 <div className="relative">
                   <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="text"
-                    placeholder={role === 'admin' ? 'admin' : 'e.g. arun01'}
+                    placeholder="Enter your username"
                     value={username}
                     onChange={e => setUsername(e.target.value)}
                     className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:border-[#0f3d20] focus:ring-2 focus:ring-[#0f3d20]/10 transition-all placeholder:text-slate-400"
                     required
+                    autoFocus
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">
-                  Password
-                </label>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Password</label>
                 <div className="relative">
                   <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <input
                     type="password"
-                    placeholder="••••••"
+                    placeholder="••••••••"
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                     className="w-full pl-9 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 focus:outline-none focus:border-[#0f3d20] focus:ring-2 focus:ring-[#0f3d20]/10 transition-all placeholder:text-slate-400"
@@ -218,11 +172,9 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               </button>
             </form>
 
-            {role === 'employee' && (
-              <p className="text-center text-xs text-slate-400 mt-4">
-                Your password is set by your admin when your account is created.
-              </p>
-            )}
+            <p className="text-center text-xs text-slate-400 mt-5">
+              Your password is set by your admin when your account is created.
+            </p>
           </div>
 
           <p className="text-center text-xs text-slate-400 mt-4">
