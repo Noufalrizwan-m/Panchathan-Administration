@@ -85,6 +85,7 @@ const PhotoSchema = new mongoose.Schema({
   fileName:   { type: String, required: true },
   uploadedBy: { type: String },
   filePath:   { type: String },
+  dataUrl:    { type: String },   // base64 image stored in MongoDB
   uploadedAt: { type: String, required: true },
   location: {
     latitude:  { type: Number },
@@ -366,9 +367,14 @@ class Database {
 
   // ── Trips (Tasks) ────────────────────────────────────────────────────────────
 
+  private tripsCol() { return mongoose.connection.db!.collection('trips'); }
+
   async getTrips(): Promise<Trip[]> {
     if (this.isMongoConnected) {
-      try { return (await TripModel.find({}).sort({ lastUpdated: -1 }).lean()) as unknown as Trip[]; } catch (e) { console.error(e); }
+      try {
+        const docs = await this.tripsCol().find({}).sort({ lastUpdated: -1 }).toArray();
+        return docs as unknown as Trip[];
+      } catch (e) { console.error('[DB] getTrips error', e); }
     }
     return this.memDb.trips;
   }
@@ -376,9 +382,9 @@ class Database {
   async getTripById(id: string): Promise<Trip | undefined> {
     if (this.isMongoConnected) {
       try {
-        const doc = await TripModel.findOne({ id }).lean();
+        const doc = await this.tripsCol().findOne({ id });
         return doc ? (doc as unknown as Trip) : undefined;
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error('[DB] getTripById error', e); }
     }
     return this.memDb.trips.find(t => t.id === id);
   }
@@ -388,27 +394,26 @@ class Database {
       try {
         const q: any = { $or: [{ driverId }, { coPassengerId: driverId }] };
         if (dateIso) {
-          const start = dateIso + 'T00:00:00.000Z';
-          const end   = dateIso + 'T23:59:59.999Z';
-          q.lastUpdated = { $gte: start, $lte: end };
+          q.lastUpdated = { $gte: dateIso + 'T00:00:00.000Z', $lte: dateIso + 'T23:59:59.999Z' };
         }
-        return (await TripModel.find(q).sort({ lastUpdated: -1 }).lean()) as unknown as Trip[];
-      } catch (e) { console.error(e); }
+        const docs = await this.tripsCol().find(q).sort({ lastUpdated: -1 }).toArray();
+        return docs as unknown as Trip[];
+      } catch (e) { console.error('[DB] getTripsByDriver error', e); }
     }
     let trips = this.memDb.trips.filter(t => t.driverId === driverId || t.coPassengerId === driverId);
-    if (dateIso) {
-      trips = trips.filter(t => t.lastUpdated.startsWith(dateIso));
-    }
+    if (dateIso) trips = trips.filter(t => t.lastUpdated.startsWith(dateIso));
     return trips.sort((a, b) => b.lastUpdated.localeCompare(a.lastUpdated));
   }
 
   async getDriverActiveTrip(driverId: string): Promise<Trip | undefined> {
     if (this.isMongoConnected) {
       try {
-        const q = { $or: [{ driverId }, { coPassengerId: driverId }] };
-        const doc = await TripModel.findOne({ ...q, $or: [{ status: 'In Progress' }, { status: 'Saved Draft' }] }).lean();
+        const doc = await this.tripsCol().findOne({
+          $or: [{ driverId }, { coPassengerId: driverId }],
+          status: { $in: ['In Progress', 'Saved Draft'] },
+        });
         return doc ? (doc as unknown as Trip) : undefined;
-      } catch (e) { console.error(e); }
+      } catch (e) { console.error('[DB] getDriverActiveTrip error', e); }
     }
     return this.memDb.trips.find(t =>
       (t.driverId === driverId || t.coPassengerId === driverId) &&
@@ -421,7 +426,11 @@ class Database {
     if (idx >= 0) this.memDb.trips[idx] = trip;
     else this.memDb.trips.unshift(trip);
     if (this.isMongoConnected) {
-      try { await TripModel.findOneAndUpdate({ id: trip.id }, trip, { upsert: true, new: true }); } catch (e) { console.error('[DB] saveTrip error', e); }
+      try {
+        const { _id, __v, ...clean } = trip as any;
+        const result = await this.tripsCol().updateOne({ id: trip.id }, { $set: clean }, { upsert: true });
+        console.log(`[DB] saveTrip id=${trip.id} matched=${result.matchedCount} modified=${result.modifiedCount} upserted=${result.upsertedCount} hasPkgDataUrl=${!!(clean.packagePhoto?.dataUrl)}`);
+      } catch (e) { console.error('[DB] saveTrip error', e); }
     }
     return trip;
   }

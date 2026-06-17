@@ -279,11 +279,22 @@ function TaskDispatchModal({
       if (!res.ok) throw new Error(data.error);
 
       if (packagePhotoFile && data.trip?.id) {
-        const fd = new FormData();
-        fd.append('photo', packagePhotoFile);
-        fd.append('kind', 'PACKAGE_REF');
-        fd.append('uploadedBy', 'admin');
-        await fetch(`/api/trips/${data.trip.id}/proof`, { method: 'POST', body: fd });
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(packagePhotoFile);
+        });
+        const proofRes = await fetch(`/api/trips/${data.trip.id}/proof`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl, kind: 'PACKAGE_REF', fileName: packagePhotoFile.name, uploadedBy: 'admin' }),
+        });
+        if (!proofRes.ok) {
+          const proofErr = await proofRes.json().catch(() => ({}));
+          console.error('[photo upload error]', proofErr);
+          throw new Error(proofErr.error || 'Photo upload failed');
+        }
       }
 
       onSaved(); onClose();
@@ -505,6 +516,11 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   const [reassigningTripId, setReassigningTripId] = useState<string | null>(null);
   const [reassignTo, setReassignTo] = useState('');
   const [lightbox, setLightbox] = useState<{ src: string; fileName: string } | null>(null);
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTaskForm, setEditTaskForm] = useState<Record<string, string>>({});
+  const [editTaskPhoto, setEditTaskPhoto] = useState<File | null>(null);
+  const [editTaskPhotoPreview, setEditTaskPhotoPreview] = useState('');
+  const [editTaskSaving, setEditTaskSaving] = useState(false);
 
   function openPhoto(src: string, fileName = 'photo.jpg') {
     if (src) setLightbox({ src, fileName });
@@ -577,6 +593,63 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
       setAttendanceMonth(prev => ({ ...prev, [userId]: prev[userId] || { year: now.getFullYear(), month: now.getMonth() } }));
       setOpenPanel({ id: driverId, type: 'attendance' });
     } catch (err) { console.error('Attendance fetch error:', err); }
+  }
+
+  function startEditTask(trip: Trip) {
+    setEditingTaskId(trip.id);
+    setEditTaskForm({
+      origin:       trip.origin || '',
+      destination:  trip.destination || '',
+      customerName: trip.customerName || '',
+      courierName:  trip.courierName || '',
+      podNumber:    trip.podNumber || '',
+      pickupNotes:  trip.pickupNotes || '',
+      deliveryNotes:trip.deliveryNotes || '',
+    });
+    setEditTaskPhoto(null);
+    const existingPkg = trip.packagePhoto;
+    setEditTaskPhotoPreview(
+      existingPkg?.dataUrl ||
+      (existingPkg?.filePath ? `/uploads/${existingPkg.filePath.replace(/\\/g, '/').split('/').pop()}` : '')
+    );
+  }
+
+  async function saveEditTask(trip: Trip) {
+    setEditTaskSaving(true);
+    try {
+      const patchRes = await fetch(`/api/trips/${trip.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...editTaskForm, operatorName: 'Admin' }),
+      });
+      if (!patchRes.ok) {
+        const patchErr = await patchRes.json().catch(() => ({}));
+        throw new Error(patchErr.error || `Save failed (${patchRes.status})`);
+      }
+      if (editTaskPhoto) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(editTaskPhoto);
+        });
+        const proofRes = await fetch(`/api/trips/${trip.id}/proof`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dataUrl, kind: 'PACKAGE_REF', fileName: editTaskPhoto.name, uploadedBy: 'admin' }),
+        });
+        if (!proofRes.ok) {
+          const proofErr = await proofRes.json().catch(() => ({}));
+          console.error('[edit photo upload error]', proofErr);
+        }
+      }
+      setEditingTaskId(null);
+      load();
+    } catch (err: any) {
+      alert('Save failed: ' + err.message);
+      console.error('Edit task error', err);
+    }
+    finally { setEditTaskSaving(false); }
   }
 
   async function reassignTrip(tripId: string, newDriverId: string) {
@@ -1431,88 +1504,286 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                           </div>
                         )}
 
-                        <button className={`w-full text-left p-4 ${isIncomplete ? 'bg-red-50' : ''}`} onClick={() => setExpandedTrip(isExpanded ? null : trip.id)}>
-                          <div className="flex justify-between items-start gap-2">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex gap-1.5 items-center mb-1 flex-wrap">
-                                <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
-                                  trip.taskType === 'DELIVERY' ? 'bg-green-100 text-green-700' :
-                                  trip.taskType === 'BOTH'     ? 'bg-purple-100 text-purple-700' :
-                                                                  'bg-blue-100 text-blue-700'
+                        <button
+                          className={`w-full text-left transition-colors ${isIncomplete ? 'bg-red-50 hover:bg-red-100/60' : 'hover:bg-gray-50/80'}`}
+                          onClick={() => setExpandedTrip(isExpanded ? null : trip.id)}
+                        >
+                          <div className="flex items-stretch gap-0">
+                            {/* Left color strip */}
+                            <div className={`w-1 shrink-0 rounded-l-none ${
+                              isIncomplete           ? 'bg-red-400' :
+                              trip.taskStage === 'Completed' ? 'bg-emerald-400' :
+                              trip.taskStage === 'Ongoing'   ? 'bg-amber-400' :
+                              trip.taskType === 'DELIVERY'   ? 'bg-green-400' :
+                              trip.taskType === 'BOTH'       ? 'bg-purple-400' : 'bg-blue-400'
+                            }`} />
+
+                            <div className="flex flex-1 items-center gap-3 px-4 py-3 min-w-0">
+                              {/* Package photo */}
+                              {trip.packagePhoto?.dataUrl ? (
+                                <button
+                                  onClick={e => { e.stopPropagation(); openPhoto(trip.packagePhoto!.dataUrl!, trip.packagePhoto!.fileName || 'package.jpg'); }}
+                                  className="w-12 h-12 rounded-xl overflow-hidden border border-gray-200 hover:border-emerald-400 transition-colors shrink-0 shadow-sm"
+                                  title="View package photo"
+                                >
+                                  <img src={trip.packagePhoto.dataUrl} alt="pkg" className="w-full h-full object-cover" />
+                                </button>
+                              ) : (
+                                <div className={`w-12 h-12 rounded-xl shrink-0 flex items-center justify-center ${
+                                  trip.taskType === 'DELIVERY' ? 'bg-green-50' :
+                                  trip.taskType === 'BOTH'     ? 'bg-purple-50' : 'bg-blue-50'
                                 }`}>
-                                  {trip.taskType === 'BOTH' ? 'P+D' : trip.taskType || 'PICKUP'}
-                                </span>
-                                {trip.porter?.enabled && (
-                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">PORTER</span>
-                                )}
-                                <StatusBadge status={trip.taskStage || trip.status} small />
-                                <span className={`text-[10px] font-semibold ${trip.priority === 'High' ? 'text-red-600' : trip.priority === 'Medium' ? 'text-amber-600' : 'text-gray-500'}`}>
-                                  {trip.priority}
-                                </span>
+                                  <Package size={20} className={
+                                    trip.taskType === 'DELIVERY' ? 'text-green-300' :
+                                    trip.taskType === 'BOTH'     ? 'text-purple-300' : 'text-blue-300'
+                                  } />
+                                </div>
+                              )}
+
+                              {/* Main info */}
+                              <div className="flex-1 min-w-0">
+                                {/* Row 1: badges */}
+                                <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                                    trip.taskType === 'DELIVERY' ? 'bg-green-100 text-green-700' :
+                                    trip.taskType === 'BOTH'     ? 'bg-purple-100 text-purple-700' :
+                                                                    'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {trip.taskType === 'BOTH' ? 'PICKUP + DELIVERY' : trip.taskType || 'PICKUP'}
+                                  </span>
+                                  <StatusBadge status={trip.taskStage || trip.status} small />
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
+                                    trip.priority === 'High'   ? 'bg-red-50 text-red-500' :
+                                    trip.priority === 'Medium' ? 'bg-amber-50 text-amber-600' :
+                                                                  'bg-gray-100 text-gray-400'
+                                  }`}>{trip.priority}</span>
+                                  {trip.porter?.enabled && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">PORTER</span>
+                                  )}
+                                </div>
+
+                                {/* Row 2: customer + origin */}
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  {trip.customerName && (
+                                    <span className="text-xs font-bold text-purple-600 truncate max-w-[100px]">{trip.customerName}</span>
+                                  )}
+                                  {trip.customerName && <span className="text-gray-300 text-xs">·</span>}
+                                  <span className="text-sm font-semibold text-gray-800 truncate">{trip.origin}</span>
+                                </div>
+
+                                {/* Row 3: assigned employee + courier */}
+                                <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                  {driver && (
+                                    <div className={`flex items-center gap-1 text-[11px] font-semibold ${isIncomplete ? 'text-red-500' : 'text-gray-500'}`}>
+                                      <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white ${isIncomplete ? 'bg-red-400' : 'bg-emerald-400'}`}>
+                                        {(driver.fullName || '?').charAt(0).toUpperCase()}
+                                      </div>
+                                      {driver.fullName}
+                                    </div>
+                                  )}
+                                  {trip.courierName && (
+                                    <span className="text-[11px] text-gray-400">
+                                      {trip.courierName}{trip.podNumber ? <span className="font-mono ml-1 text-gray-500">#{trip.podNumber}</span> : ''}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
-                              {trip.customerName && (
-                                <div className="flex items-center gap-1 mb-1">
-                                  <Building2 size={10} className="text-purple-500 shrink-0" />
-                                  <span className="text-xs font-semibold text-purple-600">{trip.customerName}</span>
-                                </div>
-                              )}
-                              <div className="text-sm font-medium text-gray-800 truncate">{trip.origin}</div>
-                              {driver && <div className={`text-xs mt-0.5 font-medium ${isIncomplete ? 'text-red-500' : 'text-emerald-600'}`}>→ {driver.fullName}</div>}
-                              {(trip.courierName || trip.podNumber) && (
-                                <div className="text-xs text-gray-400 mt-0.5">
-                                  {trip.courierName}{trip.podNumber ? ` #${trip.podNumber}` : ''}
-                                </div>
-                              )}
-                            </div>
-                            <div className="flex gap-2 items-center shrink-0">
-                              {trip.packagePhoto && (
-                                <img
-                                  src={trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : '')}
-                                  alt="pkg"
-                                  className="w-10 h-10 rounded-lg object-cover border border-gray-200"
-                                />
-                              )}
-                              <ChevronRight size={15} className={`text-gray-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                             </div>
                           </div>
                         </button>
 
                         {isExpanded && (
-                          <div className="px-4 pb-4 pt-2 border-t border-gray-100 space-y-3">
-                            {trip.porter?.enabled && (
-                              <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 text-xs space-y-1">
-                                <div className="font-bold text-orange-700 text-xs mb-1">
-                                  Porter: {trip.porter.porterTaskType === 'collect' ? 'Collect from Porter' : 'Send via Porter'}
+                          <div className="border-t border-gray-100">
+                            {editingTaskId === trip.id ? (
+                              /* ── EDIT MODE ── */
+                              <div className="p-4 space-y-3">
+                                {/* Package photo upload */}
+                                <div>
+                                  <div className="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-1.5">Package Photo</div>
+                                  <label className="flex items-center gap-3 cursor-pointer group">
+                                    <div className="w-16 h-16 rounded-xl overflow-hidden border-2 border-dashed border-gray-300 group-hover:border-emerald-400 transition-colors flex items-center justify-center shrink-0 relative">
+                                      {editTaskPhotoPreview ? (
+                                        <img src={editTaskPhotoPreview} alt="pkg" className="w-full h-full object-cover" />
+                                      ) : (
+                                        <Camera size={20} className="text-gray-300" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <div className="text-xs font-semibold text-emerald-600">{editTaskPhotoPreview ? 'Change photo' : 'Upload photo'}</div>
+                                      <div className="text-[10px] text-gray-400 mt-0.5">JPG, PNG up to 10MB</div>
+                                    </div>
+                                    <input type="file" accept="image/*" className="hidden" onChange={e => {
+                                      const f = e.target.files?.[0];
+                                      if (!f) return;
+                                      setEditTaskPhoto(f);
+                                      setEditTaskPhotoPreview(URL.createObjectURL(f));
+                                    }} />
+                                  </label>
                                 </div>
-                                {trip.porter.bookingId && <div><span className="text-gray-500">Booking: </span><span className="font-mono font-semibold">{trip.porter.bookingId}</span></div>}
-                                {trip.porter.trackingNumber && <div><span className="text-gray-500">Tracking: </span><span className="font-mono font-semibold">{trip.porter.trackingNumber}</span></div>}
-                                {trip.porter.contactNumber && <div><span className="text-gray-500">Contact: </span><a href={`tel:${trip.porter.contactNumber}`} className="font-semibold text-orange-700">{trip.porter.contactNumber}</a></div>}
-                              </div>
-                            )}
-                            {trip.pickupNotes && (
-                              <div className="text-xs text-gray-600 bg-gray-50 rounded-xl p-2.5">{trip.pickupNotes}</div>
-                            )}
-                            {(trip.proofPhotos || []).length > 0 && (
-                              <div>
-                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Proof Photos (tap to view)</div>
-                                <div className="flex gap-2 flex-wrap">
-                                  {trip.proofPhotos!.map((p, i) => {
-                                    const src = p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '');
-                                    if (!src) return null;
-                                    return (
-                                      <button key={i} onClick={() => openPhoto(src, p.fileName || 'photo.jpg')} className="relative group shrink-0">
-                                        <img src={src} alt={p.kind} className="w-16 h-16 rounded-xl object-cover border border-gray-200 group-hover:border-emerald-400 transition-colors" />
-                                        <span className={`absolute -bottom-0.5 left-0 right-0 text-center text-[8px] font-bold rounded-b-lg pb-0.5 ${p.kind === 'PICKUP' ? 'bg-blue-600/90 text-white' : 'bg-green-600/90 text-white'}`}>
-                                          {p.kind}
-                                        </span>
-                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
-                                          <Eye size={14} className="text-white opacity-0 group-hover:opacity-100 drop-shadow" />
-                                        </div>
-                                      </button>
-                                    );
-                                  })}
+
+                                {/* Address fields */}
+                                <div className="grid grid-cols-1 gap-2">
+                                  {[
+                                    { key: 'customerName', label: 'Customer / Company' },
+                                    { key: 'origin',       label: 'Pickup Address (From)' },
+                                    { key: 'destination',  label: 'Delivery Address (To)' },
+                                    { key: 'courierName',  label: 'Courier Service' },
+                                    { key: 'podNumber',    label: 'POD / Tracking No.' },
+                                  ].map(({ key, label }) => (
+                                    <div key={key}>
+                                      <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wide block mb-1">{label}</label>
+                                      <input
+                                        type="text"
+                                        value={editTaskForm[key] || ''}
+                                        onChange={e => setEditTaskForm(p => ({ ...p, [key]: e.target.value }))}
+                                        className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                                        placeholder={label}
+                                      />
+                                    </div>
+                                  ))}
+                                  <div>
+                                    <label className="text-[10px] text-gray-400 font-bold uppercase tracking-wide block mb-1">Notes</label>
+                                    <textarea
+                                      value={editTaskForm['pickupNotes'] || ''}
+                                      onChange={e => setEditTaskForm(p => ({ ...p, pickupNotes: e.target.value }))}
+                                      rows={2}
+                                      className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none"
+                                      placeholder="Any notes for the employee..."
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Save / Cancel */}
+                                <div className="flex gap-2 pt-1">
+                                  <button
+                                    onClick={() => saveEditTask(trip)}
+                                    disabled={editTaskSaving}
+                                    className="flex-1 py-2.5 bg-[#0f3d20] text-white text-xs font-bold rounded-xl hover:bg-emerald-900 disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                  >
+                                    {editTaskSaving ? <><Loader size={12} className="animate-spin" /> Saving…</> : <><Save size={12} /> Save Changes</>}
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingTaskId(null)}
+                                    className="px-4 py-2.5 bg-gray-100 text-gray-600 text-xs font-bold rounded-xl hover:bg-gray-200"
+                                  >
+                                    Cancel
+                                  </button>
                                 </div>
                               </div>
+                            ) : (
+                              /* ── VIEW MODE ── */
+                              <>
+                                {/* Package photo — full width banner if exists */}
+                                {trip.packagePhoto && (() => {
+                                  const pkgSrc = trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/uploads/${trip.packagePhoto.filePath.replace(/\\/g, '/').split('/').pop()}` : '');
+                                  return pkgSrc ? (
+                                    <button
+                                      onClick={() => openPhoto(pkgSrc, trip.packagePhoto!.fileName || 'package.jpg')}
+                                      className="w-full h-36 overflow-hidden block relative group"
+                                    >
+                                      <img src={pkgSrc} alt="Package" className="w-full h-full object-cover" />
+                                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
+                                        <Eye size={22} className="text-white opacity-0 group-hover:opacity-100 drop-shadow-lg" />
+                                      </div>
+                                      <span className="absolute top-2 left-2 bg-black/50 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">Package Photo</span>
+                                    </button>
+                                  ) : null;
+                                })()}
+
+                                {/* Details grid */}
+                                <div className="px-4 pt-3 pb-2 space-y-2">
+                                  <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">From</div>
+                                      <div className="text-sm font-semibold text-gray-800 mt-0.5">{trip.origin}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">To</div>
+                                      <div className="text-sm font-semibold text-gray-800 mt-0.5">{trip.destination}</div>
+                                    </div>
+                                    {trip.customerName && (
+                                      <div className="col-span-2">
+                                        <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Customer</div>
+                                        <div className="text-sm font-semibold text-purple-700 mt-0.5">{trip.customerName}</div>
+                                      </div>
+                                    )}
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Courier</div>
+                                      <div className="text-xs font-semibold text-gray-700 mt-0.5">{trip.courierName || '—'}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">POD No.</div>
+                                      <div className="text-xs font-mono font-semibold text-gray-700 mt-0.5">{trip.podNumber || '—'}</div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Assigned To</div>
+                                      <div className="text-xs font-semibold text-gray-700 mt-0.5 flex items-center gap-1">
+                                        {driver && <span className="w-4 h-4 rounded-full bg-emerald-400 text-white text-[8px] font-bold flex items-center justify-center shrink-0">{driver.fullName.charAt(0)}</span>}
+                                        {driver?.fullName || '—'}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div className="text-[10px] text-gray-400 font-medium uppercase tracking-wide">Last Updated</div>
+                                      <div className="text-xs text-gray-500 mt-0.5">
+                                        {new Date(trip.lastUpdated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {(trip.pickupNotes || trip.deliveryNotes) && (
+                                    <div className="bg-amber-50 border border-amber-100 rounded-xl px-3 py-2 text-xs text-amber-800">
+                                      {trip.pickupNotes || trip.deliveryNotes}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {trip.porter?.enabled && (
+                                  <div className="mx-4 mb-2 bg-orange-50 border border-orange-100 rounded-xl p-3 text-xs space-y-1">
+                                    <div className="font-bold text-orange-700 mb-1">Porter — {trip.porter.porterTaskType === 'collect' ? 'Collect from Porter' : 'Send via Porter'}</div>
+                                    {trip.porter.bookingId && <div><span className="text-gray-500">Booking: </span><span className="font-mono font-semibold">{trip.porter.bookingId}</span></div>}
+                                    {trip.porter.trackingNumber && <div><span className="text-gray-500">Tracking: </span><span className="font-mono font-semibold">{trip.porter.trackingNumber}</span></div>}
+                                    {trip.porter.contactNumber && <div><span className="text-gray-500">Contact: </span><a href={`tel:${trip.porter.contactNumber}`} className="font-semibold text-orange-700">{trip.porter.contactNumber}</a></div>}
+                                  </div>
+                                )}
+
+                                {/* Proof photos from employee */}
+                                {(trip.proofPhotos || []).filter(p => p.dataUrl).length > 0 && (
+                                  <div className="px-4 mb-2">
+                                    <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Proof Photos (by employee)</div>
+                                    <div className="flex gap-2 flex-wrap">
+                                      {trip.proofPhotos!.filter(p => p.dataUrl).map((p, i) => (
+                                        <button key={i} onClick={() => openPhoto(p.dataUrl!, p.fileName || 'photo.jpg')} className="relative group shrink-0">
+                                          <img src={p.dataUrl} alt={p.kind} className="w-20 h-20 rounded-xl object-cover border border-gray-200 group-hover:border-emerald-400 transition-colors" />
+                                          <span className={`absolute bottom-0 left-0 right-0 text-center text-[9px] font-bold rounded-b-xl py-0.5 ${p.kind === 'PICKUP' ? 'bg-blue-600/90 text-white' : 'bg-green-600/90 text-white'}`}>{p.kind}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                <div className="flex gap-2 px-4 pb-3">
+                                  <button
+                                    onClick={() => startEditTask(trip)}
+                                    className="flex-1 py-2.5 text-xs font-semibold rounded-xl bg-[#0f3d20] text-white hover:bg-emerald-900 transition-colors flex items-center justify-center gap-1.5"
+                                  >
+                                    <Edit size={12} /> Edit Task
+                                  </button>
+                                  <button
+                                    onClick={() => setReassigningTripId(reassigningTripId === trip.id ? null : trip.id)}
+                                    className="flex-1 py-2.5 text-xs font-semibold rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+                                  >
+                                    Reassign
+                                  </button>
+                                  {isIncomplete && (
+                                    <button
+                                      onClick={() => reassignTrip(trip.id, trip.driverId)}
+                                      className="flex-1 py-2.5 text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                                    >
+                                      ↩ Reset
+                                    </button>
+                                  )}
+                                </div>
+                              </>
                             )}
                           </div>
                         )}
@@ -1568,7 +1839,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                             {allPhotos.slice(0, 2).map((p, i) => (
                               <img
                                 key={i}
-                                src={p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '')}
+                                src={p.dataUrl || (p.filePath ? `/uploads/${p.filePath.replace(/\\/g, '/').split('/').pop()}` : '')}
                                 alt={p.kind}
                                 className="w-8 h-8 rounded-lg object-cover border border-gray-200"
                               />
@@ -1584,7 +1855,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                           <div className="border-t border-green-100 px-4 pb-4 pt-3 space-y-3">
                             {/* Package photo (admin uploaded) */}
                             {trip.packagePhoto && (() => {
-                              const pkgSrc = trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : '');
+                              const pkgSrc = trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/uploads/${trip.packagePhoto.filePath.replace(/\\/g, '/').split('/').pop()}` : '');
                               return pkgSrc ? (
                                 <div>
                                   <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
@@ -1608,7 +1879,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                 </div>
                                 <div className="flex gap-2 flex-wrap">
                                   {trip.proofPhotos!.map((p, i) => {
-                                    const src = p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '');
+                                    const src = p.dataUrl || (p.filePath ? `/uploads/${p.filePath.replace(/\\/g, '/').split('/').pop()}` : '');
                                     if (!src) return null;
                                     return (
                                       <button key={i} onClick={() => openPhoto(src, p.fileName || 'photo.jpg')} className="relative group shrink-0">

@@ -337,7 +337,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/trips/:id/proof', upload.single('photo'), async (req, res) => {
+  app.post('/api/trips/:id/proof', async (req, res) => {
     const { id } = req.params;
     try {
       const trip = await db.getTripById(id);
@@ -347,21 +347,21 @@ async function startServer() {
       const validKinds = ['PICKUP', 'DELIVERY', 'PICKUP_REF', 'DELIVERY_REF', 'PACKAGE_REF'];
       if (!validKinds.includes(kind)) return res.status(400).json({ error: `Invalid kind. Must be one of: ${validKinds.join(', ')}` });
 
-      let photoRecord: any = null;
-      if ((req as any).file) {
-        // Store as base64 dataUrl in MongoDB — no disk file needed
-        const file = (req as any).file;
-        const base64 = file.buffer.toString('base64');
-        const dataUrl = `data:${file.mimetype || 'image/jpeg'};base64,${base64}`;
-        photoRecord = { kind, fileName: file.originalname, uploadedBy: req.body.uploadedBy || 'driver', dataUrl, uploadedAt: new Date().toISOString() };
-      } else if (req.body.dataUrl) {
-        const dataUrl = String(req.body.dataUrl);
-        const approxBytes = Math.ceil(((dataUrl.split(',')[1] || '').length * 3) / 4);
-        if (approxBytes > 10 * 1024 * 1024) return res.status(413).json({ error: 'Image too large. Max 10 MB.' });
-        photoRecord = { kind, fileName: String(req.body.fileName || `photo-${Date.now()}.jpg`), uploadedBy: req.body.uploadedBy || 'driver', dataUrl, uploadedAt: new Date().toISOString() };
-      } else {
-        return res.status(400).json({ error: 'No photo or dataUrl provided.' });
-      }
+      console.log(`[PROOF] trip=${id} kind=${kind} hasDataUrl=${!!req.body.dataUrl} bodyKeys=${Object.keys(req.body || {}).join(',')}`);
+
+      const dataUrlBody = req.body.dataUrl ? String(req.body.dataUrl) : null;
+      if (!dataUrlBody) return res.status(400).json({ error: 'No dataUrl provided.' });
+
+      const approxBytes = Math.ceil(((dataUrlBody.split(',')[1] || '').length * 3) / 4);
+      if (approxBytes > 10 * 1024 * 1024) return res.status(413).json({ error: 'Image too large. Max 10 MB.' });
+
+      const photoRecord: any = {
+        kind,
+        fileName: String(req.body.fileName || `photo-${Date.now()}.jpg`),
+        uploadedBy: String(req.body.uploadedBy || req.body.operatorName || 'driver'),
+        dataUrl: dataUrlBody,
+        uploadedAt: new Date().toISOString()
+      };
 
       if (kind === 'PACKAGE_REF') {
         const updatedTrip = await db.saveTrip({ ...trip, packagePhoto: photoRecord, lastUpdated: new Date().toISOString() });

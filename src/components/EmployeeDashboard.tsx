@@ -174,12 +174,17 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   async function handleUploadPhoto(tripId: string, kind: 'PICKUP' | 'DELIVERY', file: File) {
     setUploading(true);
     try {
-      const fd = new FormData();
-      fd.append('photo', file);
-      fd.append('kind', kind);
-      fd.append('uploadedBy', 'driver');
-      fd.append('operatorName', sessionUser.fullName);
-      const res = await fetch(`/api/trips/${tripId}/proof`, { method: 'POST', body: fd });
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch(`/api/trips/${tripId}/proof`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataUrl, kind, fileName: file.name, uploadedBy: 'driver', operatorName: sessionUser.fullName }),
+      });
       const data = await res.json();
       if (data.trip) {
         setTodayTrips(prev => prev.map(t => t.id === tripId ? data.trip : t));

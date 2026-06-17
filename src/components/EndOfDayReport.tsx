@@ -66,11 +66,17 @@ export function EndOfDayReport({ workDay, todayTrips, userId, onSubmit, onClose 
       if (eodPhotoFiles.length > 0) {
         setUploadingPhotos(true);
         for (const { tripId, file } of eodPhotoFiles) {
-          const fd = new FormData();
-          fd.append('photo', file);
-          fd.append('kind', 'DELIVERY');
-          fd.append('uploadedBy', 'driver');
-          await fetch(`/api/trips/${tripId}/proof`, { method: 'POST', body: fd });
+          const dataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          await fetch(`/api/trips/${tripId}/proof`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dataUrl, kind: 'DELIVERY', fileName: file.name, uploadedBy: 'driver' }),
+          });
         }
         setUploadingPhotos(false);
       }
