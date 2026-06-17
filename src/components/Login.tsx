@@ -59,13 +59,13 @@ export const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         </div>
 
         <div className="relative z-10">
-          <div className="bg-white rounded-2xl px-4 py-3 inline-flex">
+          {/* <div className="bg-white rounded-2xl px-4 py-3 inline-flex">
             <img
               src="https://panchathanlogistics.com/logo.png"
               alt="Panchathan Logistics"
               className="h-14 w-auto object-contain"
             />
-          </div>
+          </div> */}
         </div>
 
         <div className="relative z-10 space-y-6">

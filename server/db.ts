@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { Vehicle, Trip, User, WorkDay } from '../src/types';
+import { Vehicle, Trip, User, WorkDay, ActivityLog } from '../src/types';
 
 const bootstrapAdmin: User = {
   id: 'admin',
@@ -154,14 +154,25 @@ const WorkDaySchema = new mongoose.Schema<WorkDay>({
 
 const WorkDayModel = (mongoose.models.WorkDay || mongoose.model<WorkDay>('WorkDay', WorkDaySchema)) as mongoose.Model<WorkDay>;
 
+const ActivityLogSchema = new mongoose.Schema({
+  id:        { type: String, required: true, unique: true },
+  userId:    { type: String, required: true, index: true },
+  userName:  { type: String, required: true },
+  action:    { type: String, required: true },
+  timestamp: { type: String, required: true },
+}, { timestamps: true });
+
+const ActivityLogModel = (mongoose.models.ActivityLog || mongoose.model('ActivityLog', ActivityLogSchema));
+
 // ─── Database class ───────────────────────────────────────────────────────────
 
 class Database {
   private memDb = {
-    users:    [bootstrapAdmin] as User[],
-    vehicles: [] as Vehicle[],
-    trips:    [] as Trip[],
-    workDays: [] as WorkDay[],
+    users:        [bootstrapAdmin] as User[],
+    vehicles:     [] as Vehicle[],
+    trips:        [] as Trip[],
+    workDays:     [] as WorkDay[],
+    activityLogs: [] as ActivityLog[],
   };
   private isMongoConnected = false;
   private mongoError: string | null = null;
@@ -463,11 +474,49 @@ class Database {
 
   async forceReseedMongoDB() { return this.clearAllData(); }
 
-  // ── Stubs for removed features (so old server.ts calls don't throw) ──────────
+  async logActivity(userId: string, userName: string, action: string) {
+    const log: ActivityLog = {
+      id: `log_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      userId,
+      userName,
+      action,
+      timestamp: new Date().toISOString(),
+    };
+    if (this.isMongoConnected) {
+      try { await ActivityLogModel.create(log); } catch (e) { console.error('[DB] logActivity error', e); }
+    } else {
+      this.memDb.activityLogs.unshift(log);
+      if (this.memDb.activityLogs.length > 500) this.memDb.activityLogs.pop();
+    }
+  }
 
-  async logActivity(_userId: string, _userName: string, _action: string) { /* removed */ }
-  async getActivityLogs(_limit?: number) { return []; }
-  async getActivityLogsByUser(_userId: string, _username?: string) { return []; }
+  async getActivityLogs(limit = 100): Promise<ActivityLog[]> {
+    if (this.isMongoConnected) {
+      try {
+        const docs = await ActivityLogModel.find().sort({ timestamp: -1 }).limit(limit).lean();
+        return docs as unknown as ActivityLog[];
+      } catch (e) { console.error('[DB] getActivityLogs error', e); }
+    }
+    return this.memDb.activityLogs.slice(0, limit);
+  }
+
+  async getActivityLogsByUser(userId: string, username?: string, fullName?: string): Promise<ActivityLog[]> {
+    if (this.isMongoConnected) {
+      try {
+        const orClauses: any[] = [{ userId }];
+        if (username) orClauses.push({ userName: { $regex: username, $options: 'i' } });
+        if (fullName && fullName !== username) orClauses.push({ userName: { $regex: fullName, $options: 'i' } });
+        const docs = await ActivityLogModel.find({ $or: orClauses } as any).sort({ timestamp: -1 }).limit(200).lean();
+        return docs as unknown as ActivityLog[];
+      } catch (e) { console.error('[DB] getActivityLogsByUser error', e); }
+    }
+    return this.memDb.activityLogs.filter(
+      l => l.userId === userId ||
+        (username && l.userName.toLowerCase().includes(username.toLowerCase())) ||
+        (fullName && l.userName.toLowerCase().includes(fullName.toLowerCase()))
+    );
+  }
+
   async getLocationLogsForDriver(_driverId: string, _date?: string) { return []; }
 }
 

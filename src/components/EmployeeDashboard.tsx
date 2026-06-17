@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   ClipboardList, History, User, LogOut, Play, StopCircle,
   Truck, Bike, Car, Navigation, Calendar, ChevronRight,
-  CheckCircle, AlertCircle, Clock, Loader, Edit, Save, X, Phone, MapPin
+  CheckCircle, AlertCircle, Clock, Loader, Edit, Save, X, Phone, MapPin, RefreshCw
 } from 'lucide-react';
 import { User as UserType, Driver, Trip, Vehicle, WorkDay } from '../types';
 import { DailyPlanModal } from './DailyPlanModal';
@@ -23,6 +23,7 @@ const TRANSPORT_ICONS: Record<string, React.ReactNode> = {
 
 export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   const [activeTab, setActiveTab] = useState<Tab>('today');
+  const [taskDateFilter, setTaskDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('today');
   const [driver, setDriver] = useState<Driver | null>(null);
   const [todayTrips, setTodayTrips] = useState<Trip[]>([]);
   const [allAssignedTrips, setAllAssignedTrips] = useState<Trip[]>([]);
@@ -85,7 +86,15 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
       setAllAssignedTrips(tripsData.trips || []);
       setWorkDay(workDayData.workDay || null);
       const wdTrips: Trip[] = workDayData.trips || [];
-      setTodayTrips(wdTrips.length > 0 ? wdTrips : (tripsData.trips || []));
+      const allDriverTrips: Trip[] = tripsData.trips || [];
+      if (wdTrips.length > 0) {
+        // Always merge: WorkDay trips + any newly assigned non-completed trips (e.g. reassigned from admin after WorkDay started)
+        const wdIds = new Set(wdTrips.map((t: Trip) => t.id));
+        const newlyAssigned = allDriverTrips.filter((t: Trip) => !wdIds.has(t.id) && t.taskStage !== 'Completed' && t.status !== 'Completed');
+        setTodayTrips([...wdTrips, ...newlyAssigned]);
+      } else {
+        setTodayTrips(allDriverTrips);
+      }
     } catch (err) {
       console.error('Load error', err);
     } finally {
@@ -94,6 +103,18 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   }, [driverId, sessionUser.id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh task data every 60 s so reassigned tasks appear without manual reload
+  const [refreshing, setRefreshing] = useState(false);
+  async function manualRefresh() {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  }
+  useEffect(() => {
+    const id = setInterval(load, 60_000);
+    return () => clearInterval(id);
+  }, [load]);
 
   useEffect(() => {
     if (driver) {
@@ -197,10 +218,26 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
     ? vehicles.find(v => v.id === workDay.vehicleId)
     : null;
 
-  const upcomingToday = todayTrips.filter(t => t.taskStage === 'Upcoming' || !t.taskStage);
-  const ongoingToday = todayTrips.filter(t => t.taskStage === 'Ongoing');
-  const completedToday = todayTrips.filter(t => t.taskStage === 'Completed');
-  const incompleteToday = todayTrips.filter(t => t.taskStage === 'Incomplete');
+  function inTaskDateRange(iso: string) {
+    if (taskDateFilter === 'today') {
+      return new Date(iso).toDateString() === new Date().toDateString();
+    }
+    const cutoff = new Date();
+    if (taskDateFilter === 'week') cutoff.setDate(cutoff.getDate() - 7);
+    else if (taskDateFilter === 'month') cutoff.setMonth(cutoff.getMonth() - 1);
+    else return true;
+    return new Date(iso) >= cutoff;
+  }
+
+  // Use allAssignedTrips for week/month/all; todayTrips for today
+  const displayTrips = taskDateFilter === 'today'
+    ? todayTrips
+    : allAssignedTrips.filter(t => inTaskDateRange(t.lastUpdated));
+
+  const upcomingToday = displayTrips.filter(t => t.taskStage === 'Upcoming' || !t.taskStage);
+  const ongoingToday = displayTrips.filter(t => t.taskStage === 'Ongoing');
+  const completedToday = displayTrips.filter(t => t.taskStage === 'Completed');
+  const incompleteToday = displayTrips.filter(t => t.taskStage === 'Incomplete');
 
   const dayComplete = workDay?.eodSubmitted;
   const isLate = !workDay && !dayComplete && nowMin > OFFICE_START + 15 && nowMin < OFFICE_END;
@@ -297,15 +334,36 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
         {activeTab === 'today' && (
           <div className="p-4">
 
+            {/* Date filter + Refresh */}
+            <div className="flex items-center gap-2 mb-3 overflow-x-auto pb-1">
+              {(['today', 'week', 'month', 'all'] as const).map(f => (
+                <button key={f} onClick={() => setTaskDateFilter(f)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                    taskDateFilter === f
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300'
+                  }`}>
+                  {f === 'today' ? 'Today' : f === 'week' ? 'This Week' : f === 'month' ? 'This Month' : 'All'}
+                </button>
+              ))}
+              <button onClick={manualRefresh} disabled={refreshing}
+                className="ml-auto shrink-0 flex items-center gap-1 text-[11px] text-gray-400 hover:text-blue-600 transition-colors py-1 px-2 rounded-lg hover:bg-blue-50">
+                <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''} />
+                {refreshing ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+
             {/* ── COMPLETION SCORE ── */}
-            {todayTrips.length > 0 && (() => {
+            {displayTrips.length > 0 && (() => {
               const done = completedToday.length;
-              const total = todayTrips.length;
+              const total = displayTrips.length;
               const pct = Math.round((done / total) * 100);
               return (
                 <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-4 mb-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs font-bold text-gray-600">Today's Progress</span>
+                    <span className="text-xs font-bold text-gray-600">
+                      {taskDateFilter === 'today' ? "Today's Progress" : taskDateFilter === 'week' ? 'This Week' : taskDateFilter === 'month' ? 'This Month' : 'All Tasks'}
+                    </span>
                     <span className={`text-xs font-bold ${pct === 100 ? 'text-emerald-600' : pct >= 50 ? 'text-blue-600' : 'text-amber-600'}`}>
                       {done}/{total} done · {pct}%
                     </span>
@@ -384,7 +442,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
               </div>
             )}
 
-            {workDay && todayTrips.length === 0 && (
+            {workDay && displayTrips.length === 0 && (
               <div className="text-center py-10 text-gray-400">
                 <ClipboardList size={40} className="mx-auto mb-3 opacity-30" />
                 <p className="text-sm">No tasks assigned yet. Check with admin.</p>
@@ -410,7 +468,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   <ClipboardList size={12} /> Upcoming ({upcomingToday.length})
                 </h3>
                 {upcomingToday.map(t => (
-                  <TaskCard key={t.id} trip={t} onStartTask={workDay ? handleStartTask : () => {}} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
+                  <TaskCard key={t.id} trip={t} onStartTask={handleStartTask} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
                 ))}
               </div>
             )}

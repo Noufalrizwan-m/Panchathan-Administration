@@ -28,22 +28,16 @@ async function startServer() {
     next();
   });
 
-  // ---- Upload setup ----
+  // ---- Upload setup (memory → base64 in MongoDB, no disk dependency) ----
   const UPLOAD_DIR = path.join(process.cwd(), 'data', 'uploads');
   if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
   const upload = multer({
-    storage: multer.diskStorage({
-      destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
-      filename: (_req, file, cb) => {
-        const safeName = `${Date.now()}-${file.originalname.replace(/[^a-zA-Z0-9_.-]/g, '_')}`;
-        cb(null, safeName);
-      }
-    }),
+    storage: multer.memoryStorage(),
     limits: { fileSize: 10 * 1024 * 1024 }
   });
 
-  // Serve uploaded files statically
+  // Still serve any legacy disk files that exist
   app.use('/uploads', express.static(UPLOAD_DIR));
 
   // ----------------------------------------------------------------
@@ -355,8 +349,11 @@ async function startServer() {
 
       let photoRecord: any = null;
       if ((req as any).file) {
+        // Store as base64 dataUrl in MongoDB — no disk file needed
         const file = (req as any).file;
-        photoRecord = { kind, fileName: file.originalname, uploadedBy: req.body.uploadedBy || 'driver', filePath: path.relative(process.cwd(), file.path), uploadedAt: new Date().toISOString() };
+        const base64 = file.buffer.toString('base64');
+        const dataUrl = `data:${file.mimetype || 'image/jpeg'};base64,${base64}`;
+        photoRecord = { kind, fileName: file.originalname, uploadedBy: req.body.uploadedBy || 'driver', dataUrl, uploadedAt: new Date().toISOString() };
       } else if (req.body.dataUrl) {
         const dataUrl = String(req.body.dataUrl);
         const approxBytes = Math.ceil(((dataUrl.split(',')[1] || '').length * 3) / 4);
@@ -372,11 +369,39 @@ async function startServer() {
       }
 
       const updatedTrip = await db.saveTrip({ ...trip, proofPhotos: [...(trip.proofPhotos || []), photoRecord], lastUpdated: new Date().toISOString() });
-      await db.logActivity('1', req.body.operatorName || 'Employee', `${kind} photo uploaded for task ${id}`);
+      const photoDriver = await db.getDriverById(trip.driverId);
+      await db.logActivity(photoDriver?.id || trip.driverId, photoDriver?.fullName || req.body.operatorName || 'Employee', `${kind} photo uploaded for task ${id}`);
       return res.json({ success: true, trip: updatedTrip });
     } catch (err: any) {
       if (err?.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'Image too large. Max 10 MB.' });
       return res.status(500).json({ error: err.message || String(err) });
+    }
+  });
+
+  // Reassign or reset a task (admin use: change driverId, reset to pending)
+  app.patch('/api/trips/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+      const trip = await db.getTripById(id);
+      if (!trip) return res.status(404).json({ error: 'Trip not found.' });
+      const { driverId, status, taskStage, operatorName, ...rest } = req.body;
+      const isReassign = !!(driverId || taskStage === 'Upcoming');
+      const updatedTrip = await db.saveTrip({
+        ...trip,
+        ...rest,
+        ...(driverId   ? { driverId }   : {}),
+        ...(status     ? { status }     : {}),
+        ...(taskStage  ? { taskStage }  : {}),
+        // Clear the incomplete remark when reassigning so the new employee starts fresh
+        ...(isReassign ? { remark: undefined, remarkAddedAt: undefined } : {}),
+        lastUpdated: new Date().toISOString(),
+      });
+      const newDriver = driverId ? await db.getDriverById(driverId) : null;
+      await db.logActivity('admin', operatorName || 'Admin',
+        `Task ${id} reassigned to ${newDriver?.fullName || driverId || 'same employee'}, status → ${updatedTrip.status}`);
+      return res.json({ success: true, trip: updatedTrip });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -388,7 +413,8 @@ async function startServer() {
       const trip = await db.getTripById(id);
       if (!trip) return res.status(404).json({ error: 'Trip not found.' });
       const updated = await db.saveTrip({ ...trip, remark: remark.trim(), remarkAddedAt: new Date().toISOString(), taskStage: 'Incomplete', status: 'Incomplete', lastUpdated: new Date().toISOString() });
-      await db.logActivity('driver', operatorName || 'Employee', `Remark on ${id}: ${remark.trim()}`);
+      const remarkDriver = await db.getDriverById(trip.driverId);
+      await db.logActivity(remarkDriver?.id || trip.driverId, remarkDriver?.fullName || operatorName || 'Employee', `Marked task ${id} incomplete: ${remark.trim()}`);
       return res.json({ success: true, trip: updated });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -478,7 +504,8 @@ async function startServer() {
       const workDay = await db.getWorkDayById(id);
       if (!workDay) return res.status(404).json({ error: 'Work day not found.' });
       const updated = await db.saveWorkDay({ ...workDay, endTime, endLocation, eodNotes: eodNotes || '', eodSubmitted: true });
-      await db.logActivity(userId || workDay.userId, 'Employee', `Submitted end-of-day report at ${endLocation.address}`);
+      const eodUser = await db.findUserById(userId || workDay.userId);
+      await db.logActivity(userId || workDay.userId, eodUser?.fullName || 'Employee', `Submitted end-of-day report at ${endLocation.address}`);
       return res.json({ workDay: updated });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -494,7 +521,9 @@ async function startServer() {
       let photoRecord: any = null;
       if ((req as any).file) {
         const file = (req as any).file;
-        photoRecord = { kind: 'DELIVERY', fileName: file.originalname, uploadedBy: 'driver', filePath: path.relative(process.cwd(), file.path), uploadedAt: new Date().toISOString() };
+        const base64 = file.buffer.toString('base64');
+        const dataUrl = `data:${file.mimetype || 'image/jpeg'};base64,${base64}`;
+        photoRecord = { kind: 'DELIVERY', fileName: file.originalname, uploadedBy: 'driver', dataUrl, uploadedAt: new Date().toISOString() };
       } else if (req.body.dataUrl) {
         photoRecord = { kind: 'DELIVERY', fileName: String(req.body.fileName || `eod-${Date.now()}.jpg`), uploadedBy: 'driver', dataUrl: req.body.dataUrl, uploadedAt: new Date().toISOString() };
       } else {
@@ -552,7 +581,7 @@ async function startServer() {
     try {
       const user = await db.findUserByUsername(username);
       if (!user) return res.status(404).json({ error: 'User not found.' });
-      const logs = await db.getActivityLogsByUser(user.id, username);
+      const logs = await db.getActivityLogsByUser(user.id, username, user.fullName);
       return res.json({ logs });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });

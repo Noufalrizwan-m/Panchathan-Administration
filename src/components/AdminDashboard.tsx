@@ -3,9 +3,10 @@ import {
   Users, Truck, ClipboardList, Activity, Plus, Search, Edit, Trash2, X, Save,
   CheckCircle, AlertCircle, Package, LogOut, RefreshCw,
   ChevronDown, ChevronRight, ChevronUp, Eye, Camera, Loader, Shield,
-  Building2, Star, Award, Filter, Phone, MapPin, Clock
+  Building2, Star, Award, Filter, Phone, MapPin, Clock, Download,
+  Calendar, ChevronLeft, CalendarDays
 } from 'lucide-react';
-import { User as UserType, Vehicle, Driver, Trip, ActivityLog } from '../types';
+import { User as UserType, Vehicle, Driver, Trip, ActivityLog, WorkDay } from '../types';
 
 interface Props {
   sessionUser: UserType;
@@ -490,14 +491,30 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [editingEmp, setEditingEmp] = useState<(Driver & { username?: string }) | null>(null);
   const [showDispatch, setShowDispatch] = useState(false);
-  const [expandedActivity, setExpandedActivity] = useState<string | null>(null);
   const [activityFilter, setActivityFilter] = useState('');
   const [empActivities, setEmpActivities] = useState<Record<string, ActivityLog[]>>({});
-  const [expandedEmployee, setExpandedEmployee] = useState<string | null>(null);
+  const [attendanceHistory, setAttendanceHistory] = useState<Record<string, WorkDay[]>>({});
+  const [attendanceMonth, setAttendanceMonth] = useState<Record<string, { year: number; month: number }>>({});
+  // Single open panel across all employee cards — prevents multiple sections opening at once
+  const [openPanel, setOpenPanel] = useState<{ id: string; type: 'detail' | 'activity' | 'attendance' } | null>(null);
   const [expandedTrip, setExpandedTrip] = useState<string | null>(null);
   const [dbStatus, setDbStatus] = useState<any>(null);
   const [customerFilter, setCustomerFilter] = useState('');
   const [taskSearch, setTaskSearch] = useState('');
+  const [taskDateFilter, setTaskDateFilter] = useState<'today' | 'week' | 'month' | 'all'>('all');
+  const [reassigningTripId, setReassigningTripId] = useState<string | null>(null);
+  const [reassignTo, setReassignTo] = useState('');
+  const [lightbox, setLightbox] = useState<{ src: string; fileName: string } | null>(null);
+
+  function openPhoto(src: string, fileName = 'photo.jpg') {
+    if (src) setLightbox({ src, fileName });
+  }
+  function downloadPhoto(src: string, fileName = 'photo.jpg') {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = fileName;
+    a.click();
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -536,19 +553,44 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
     } catch (err) { console.error(err); }
   }
 
-  async function loadEmpActivity(username: string) {
+  async function loadEmpActivity(driverId: string, username: string) {
     if (!username) return;
     // Toggle close
-    if (expandedActivity === username) { setExpandedActivity(null); return; }
-    // Already cached — just show
-    if (empActivities[username]) { setExpandedActivity(username); return; }
-    // Fetch then show
+    if (openPanel?.id === driverId && openPanel.type === 'activity') { setOpenPanel(null); return; }
+    // Fetch (always refresh — don't serve stale cache)
     try {
       const res = await fetch(`/api/users/${username}/activity`);
       const data = await res.json();
       setEmpActivities(prev => ({ ...prev, [username]: data.logs || [] }));
-      setExpandedActivity(username);
+      setOpenPanel({ id: driverId, type: 'activity' });
     } catch (err) { console.error('Activity fetch error:', err); }
+  }
+
+  async function loadAttendance(driverId: string, userId: string) {
+    if (!userId) return;
+    if (openPanel?.id === driverId && openPanel.type === 'attendance') { setOpenPanel(null); return; }
+    try {
+      const res = await fetch(`/api/workday/history/${userId}?limit=90`);
+      const data = await res.json();
+      setAttendanceHistory(prev => ({ ...prev, [userId]: data.history || [] }));
+      const now = new Date();
+      setAttendanceMonth(prev => ({ ...prev, [userId]: prev[userId] || { year: now.getFullYear(), month: now.getMonth() } }));
+      setOpenPanel({ id: driverId, type: 'attendance' });
+    } catch (err) { console.error('Attendance fetch error:', err); }
+  }
+
+  async function reassignTrip(tripId: string, newDriverId: string) {
+    if (!newDriverId) return;
+    try {
+      await fetch(`/api/trips/${tripId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ driverId: newDriverId, status: 'Saved Draft', taskStage: 'Upcoming', operatorName: 'Admin' }),
+      });
+      setReassigningTripId(null);
+      setReassignTo('');
+      load();
+    } catch (err) { console.error('Reassign error', err); }
   }
 
   const filteredDrivers = drivers.filter(d =>
@@ -561,7 +603,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   const todayStr = new Date().toISOString().slice(0, 10);
 
   const pendingTrips = trips.filter(t => t.status !== 'Completed');
-  const completedTrips = trips.filter(t => t.status === 'Completed');
+  const completedTrips = trips.filter(t => t.status === 'Completed' && inDateRange(t.lastUpdated));
   const incompleteTrips = trips.filter(t => t.status === 'Incomplete');
 
   // Today's stats
@@ -580,9 +622,21 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   // Customer filter helpers
   const allCustomers = [...new Set(trips.map(t => t.customerName).filter(Boolean))] as string[];
 
-  // Active Tasks list = pending only (not Incomplete — those show in their own section below)
+  function inDateRange(iso: string) {
+    if (taskDateFilter === 'all') return true;
+    const d = new Date(iso);
+    const now = new Date();
+    if (taskDateFilter === 'today') return d.toDateString() === now.toDateString();
+    const cutoff = new Date(now);
+    if (taskDateFilter === 'week') cutoff.setDate(now.getDate() - 7);
+    else cutoff.setMonth(now.getMonth() - 1);
+    return d >= cutoff;
+  }
+
+  // Active Tasks = everything not Completed (Incomplete shows here too, styled red + reassignable)
   const filteredActiveTasks = trips.filter(t => {
-    if (t.status === 'Completed' || t.status === 'Incomplete') return false;
+    if (t.status === 'Completed') return false;
+    if (!inDateRange(t.lastUpdated)) return false;
     if (customerFilter && t.customerName !== customerFilter) return false;
     if (taskSearch) {
       const q = taskSearch.toLowerCase();
@@ -706,17 +760,20 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                 <button onClick={() => setShowAddEmp(true)} className="mt-3 text-sm text-emerald-600 font-semibold underline">Add first employee →</button>
               </div>
             ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 items-start">
                 {filteredDrivers.map(driver => {
                   const empUsername = userMap[driver.id]?.username;
                   const driverTrips = trips.filter(t => t.driverId === driver.id || t.coPassengerId === driver.id);
                   const pendingCount = driverTrips.filter(t => t.taskStage === 'Upcoming' || t.taskStage === 'Ongoing').length;
                   const completedCount = driverTrips.filter(t => t.status === 'Completed').length;
-                  const isDetailExpanded = expandedEmployee === driver.id;
-                  const isActivityExpanded = !!empUsername && expandedActivity === empUsername;
+                  const isDetailExpanded = openPanel?.id === driver.id && openPanel.type === 'detail';
+                  const isActivityExpanded = !!empUsername && openPanel?.id === driver.id && openPanel.type === 'activity';
+                  const isAttendanceExpanded = openPanel?.id === driver.id && openPanel.type === 'attendance';
+
+                  const isAnyPanelOpen = openPanel?.id === driver.id;
 
                   return (
-                    <div key={driver.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                    <div key={driver.id} className={`bg-white rounded-2xl shadow-sm overflow-hidden transition-all duration-200 ${isAnyPanelOpen ? 'border-2 border-emerald-400 shadow-emerald-100 shadow-md' : 'border border-gray-100'}`}>
 
                       {/* Card header */}
                       <div className="flex items-start gap-3 p-4">
@@ -757,7 +814,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                         <div className="flex gap-1 shrink-0">
                           <button
                             title="View details"
-                            onClick={() => setExpandedEmployee(isDetailExpanded ? null : driver.id)}
+                            onClick={() => setOpenPanel(isDetailExpanded ? null : { id: driver.id, type: 'detail' })}
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                           >
                             {isDetailExpanded ? <ChevronUp size={14} /> : <Eye size={14} />}
@@ -853,39 +910,223 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                         </div>
                       )}
 
-                      {/* Activity log button */}
-                      <button
-                        onClick={() => { if (empUsername) loadEmpActivity(empUsername); }}
-                        disabled={!empUsername}
-                        className="w-full flex items-center justify-between px-4 py-2 border-t border-gray-100 text-xs text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        <span className="font-medium flex items-center gap-1.5">
+                      {/* Bottom action bar — Activity Log | Attendance */}
+                      <div className="flex border-t border-gray-100">
+                        <button
+                          onClick={() => { if (empUsername) loadEmpActivity(driver.id, empUsername); }}
+                          disabled={!empUsername}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed border-r border-gray-100"
+                        >
                           <Activity size={12} />
-                          Activity Log
-                          {!empUsername && <span className="text-amber-500 text-[9px]">(no account)</span>}
-                        </span>
-                        {isActivityExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                      </button>
+                          <span className="font-medium">Activity Log</span>
+                          {isActivityExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                        </button>
+                        <button
+                          onClick={() => loadAttendance(driver.id, driver.id)}
+                          className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-gray-500 hover:bg-gray-50 transition-colors"
+                        >
+                          <CalendarDays size={12} />
+                          <span className="font-medium">Attendance</span>
+                          {isAttendanceExpanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                        </button>
+                      </div>
 
-                      {/* Activity log content — FIXED: compare directly by username */}
-                      {isActivityExpanded && empUsername && empActivities[empUsername] && (
-                        <div className="px-4 pb-3 border-t border-gray-100">
-                          {empActivities[empUsername].length === 0 ? (
-                            <p className="text-xs text-gray-400 py-2 text-center">No activity recorded yet.</p>
+                      {/* Activity log content */}
+                      {isActivityExpanded && empUsername && (
+                        <div className="border-t border-gray-100">
+                          <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border-b border-emerald-100">
+                            <div className="w-5 h-5 rounded-full bg-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-[10px] shrink-0">
+                              {(driver.fullName || '?').charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-xs font-bold text-emerald-800">{driver.fullName}'s Activity Log</span>
+                          </div>
+                          <div className="px-4 pb-3">
+                          {!empActivities[empUsername] ? (
+                            <p className="text-xs text-gray-400 py-3 text-center">Loading…</p>
+                          ) : empActivities[empUsername].length === 0 ? (
+                            <p className="text-xs text-gray-400 py-3 text-center">No activity recorded yet. Activity will appear after the employee logs in or takes actions.</p>
                           ) : (
-                            <div className="space-y-1.5 mt-2">
-                              {empActivities[empUsername].slice(0, 8).map(log => (
-                                <div key={log.id} className="flex gap-2 text-xs">
-                                  <span className="text-gray-300 shrink-0 mt-0.5 w-28">
-                                    {new Date(log.timestamp).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                                  </span>
-                                  <span className="text-gray-600 flex-1">{log.action}</span>
-                                </div>
-                              ))}
+                            <div className="space-y-1.5 mt-2 max-h-48 overflow-y-auto">
+                              {empActivities[empUsername].map(log => {
+                                const isLogin = log.action.toLowerCase().includes('logged in');
+                                const isLate = (() => {
+                                  if (!isLogin) return false;
+                                  const t = new Date(log.timestamp);
+                                  const [sh, sm] = (driver.shiftStart || '09:30').split(':').map(Number);
+                                  return t.getHours() > sh || (t.getHours() === sh && t.getMinutes() > sm);
+                                })();
+                                return (
+                                  <div key={log.id} className="flex gap-2 text-xs items-start">
+                                    <span className="text-gray-300 shrink-0 mt-0.5 w-28">
+                                      {new Date(log.timestamp).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    <span className={`flex-1 ${isLogin && isLate ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                                      {log.action}
+                                      {isLogin && isLate && <span className="ml-1 text-[9px] bg-red-100 text-red-600 px-1 py-0.5 rounded font-bold">LATE</span>}
+                                    </span>
+                                  </div>
+                                );
+                              })}
                             </div>
                           )}
+                          </div>
                         </div>
                       )}
+
+                      {/* Attendance calendar */}
+                      {isAttendanceExpanded && (() => {
+                        const userId = driver.id;
+                        const wds: WorkDay[] = attendanceHistory[userId] || [];
+                        const cur = attendanceMonth[userId] || { year: new Date().getFullYear(), month: new Date().getMonth() };
+                        const { year, month } = cur;
+                        const wdMap: Record<string, WorkDay> = {};
+                        wds.forEach(w => { wdMap[w.date] = w; });
+
+                        const [sh, sm] = (driver.shiftStart || '09:30').split(':').map(Number);
+                        function getLateMinutes(wd: WorkDay): number {
+                          const start = new Date(wd.startTime);
+                          return (start.getHours() - sh) * 60 + (start.getMinutes() - sm);
+                        }
+                        function getDayStatus(wd: WorkDay | undefined): 'present' | 'late' | 'very-late' | 'absent' {
+                          if (!wd) return 'absent';
+                          const late = getLateMinutes(wd);
+                          if (late <= 0) return 'present';
+                          if (late <= 30) return 'late';
+                          return 'very-late';
+                        }
+
+                        const firstDay = new Date(year, month, 1).getDay(); // 0=Sun
+                        const daysInMonth = new Date(year, month + 1, 0).getDate();
+                        const today = new Date().toISOString().slice(0, 10);
+                        const monthName = new Date(year, month).toLocaleString('en-IN', { month: 'long', year: 'numeric' });
+
+                        // Stats for this month
+                        let present = 0, late = 0, veryLate = 0;
+                        for (let d = 1; d <= daysInMonth; d++) {
+                          const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                          if (dateStr > today) continue;
+                          const dayOfWeek = new Date(year, month, d).getDay();
+                          if (dayOfWeek === 0 || dayOfWeek === 6) continue; // skip weekends
+                          const s = getDayStatus(wdMap[dateStr]);
+                          if (s === 'present') present++;
+                          else if (s === 'late') late++;
+                          else if (s === 'very-late') { late++; veryLate++; }
+                        }
+
+                        const cells: (number | null)[] = [];
+                        for (let i = 0; i < firstDay; i++) cells.push(null);
+                        for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+                        return (
+                          <div className="border-t border-gray-100 bg-gray-50/50">
+                            {/* Header with employee name */}
+                            <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border-b border-emerald-100">
+                              <div className="w-5 h-5 rounded-full bg-emerald-200 text-emerald-700 flex items-center justify-center font-bold text-[10px] shrink-0">
+                                {(driver.fullName || '?').charAt(0).toUpperCase()}
+                              </div>
+                              <span className="text-xs font-bold text-emerald-800">{driver.fullName}'s Attendance</span>
+                              <span className="ml-auto text-[10px] text-emerald-600">Shift: {driver.shiftStart || '09:30'} – {driver.shiftEnd || '19:00'}</span>
+                            </div>
+                            {/* Month nav */}
+                            <div className="flex items-center justify-between px-4 py-2.5 bg-white border-b border-gray-100">
+                              <button
+                                onClick={() => {
+                                  const prev = month === 0 ? { year: year - 1, month: 11 } : { year, month: month - 1 };
+                                  setAttendanceMonth(p => ({ ...p, [userId]: prev }));
+                                }}
+                                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500"
+                              ><ChevronLeft size={15} /></button>
+                              <span className="text-xs font-bold text-gray-700">{monthName}</span>
+                              <button
+                                onClick={() => {
+                                  const next = month === 11 ? { year: year + 1, month: 0 } : { year, month: month + 1 };
+                                  setAttendanceMonth(p => ({ ...p, [userId]: next }));
+                                }}
+                                className="p-1 rounded-lg hover:bg-gray-100 text-gray-500"
+                              ><ChevronRight size={15} /></button>
+                            </div>
+
+                            {/* Stats pills */}
+                            <div className="flex gap-2 px-4 py-2">
+                              <span className="flex-1 text-center bg-emerald-50 text-emerald-700 rounded-lg py-1 text-[10px] font-bold">
+                                <span className="block text-sm leading-none">{present}</span>Present
+                              </span>
+                              <span className="flex-1 text-center bg-amber-50 text-amber-700 rounded-lg py-1 text-[10px] font-bold">
+                                <span className="block text-sm leading-none">{late}</span>Late
+                              </span>
+                              <span className="flex-1 text-center bg-red-50 text-red-700 rounded-lg py-1 text-[10px] font-bold">
+                                <span className="block text-sm leading-none">{veryLate}</span>&gt;30 min
+                              </span>
+                              <span className="flex-1 text-center bg-gray-100 text-gray-500 rounded-lg py-1 text-[10px] font-bold">
+                                <span className="block text-sm leading-none">{Math.max(0, (present + late) > 0 ? Math.round((present / (present + late)) * 100) : 0)}%</span>On-Time
+                              </span>
+                            </div>
+
+                            {/* Day headers */}
+                            <div className="grid grid-cols-7 px-2 pb-1">
+                              {['S','M','T','W','T','F','S'].map((d, i) => (
+                                <div key={i} className={`text-center text-[9px] font-bold py-1 ${i === 0 || i === 6 ? 'text-gray-300' : 'text-gray-400'}`}>{d}</div>
+                              ))}
+                            </div>
+
+                            {/* Day cells */}
+                            <div className="grid grid-cols-7 gap-0.5 px-2 pb-3">
+                              {cells.map((day, idx) => {
+                                if (!day) return <div key={idx} />;
+                                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                                const isFuture = dateStr > today;
+                                const isToday = dateStr === today;
+                                const dayOfWeek = (idx) % 7;
+                                const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+                                const wd = wdMap[dateStr];
+                                const status = isFuture || isWeekend ? 'none' : getDayStatus(wd);
+                                const lateMin = wd && !isFuture ? getLateMinutes(wd) : null;
+
+                                const dotColor =
+                                  status === 'present'   ? 'bg-emerald-400' :
+                                  status === 'late'      ? 'bg-amber-400' :
+                                  status === 'very-late' ? 'bg-red-400' :
+                                  isWeekend              ? 'bg-transparent' :
+                                  isFuture               ? 'bg-transparent' : 'bg-gray-200';
+
+                                const cellBg =
+                                  isToday                ? 'ring-2 ring-[#0f3d20] ring-offset-0' :
+                                  status === 'present'   ? 'bg-emerald-50' :
+                                  status === 'late'      ? 'bg-amber-50' :
+                                  status === 'very-late' ? 'bg-red-50' :
+                                  isWeekend              ? '' :
+                                  isFuture               ? '' : 'bg-gray-50';
+
+                                return (
+                                  <div
+                                    key={idx}
+                                    title={wd ? `${wd.date}: Checked in ${new Date(wd.startTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}${lateMin !== null && lateMin > 0 ? ` (${lateMin}m late)` : ''}${wd.endTime ? `, Out: ${new Date(wd.endTime).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : ''}` : dateStr}
+                                    className={`flex flex-col items-center justify-center rounded-xl py-1.5 cursor-default transition-all ${cellBg}`}
+                                  >
+                                    <span className={`text-[10px] font-semibold ${
+                                      isToday ? 'text-[#0f3d20]' :
+                                      isWeekend ? 'text-gray-300' :
+                                      isFuture ? 'text-gray-300' :
+                                      status === 'absent' ? 'text-gray-300' : 'text-gray-700'
+                                    }`}>{day}</span>
+                                    {!isWeekend && !isFuture && (
+                                      <div className={`w-1.5 h-1.5 rounded-full mt-0.5 ${dotColor}`} />
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            {/* Legend */}
+                            <div className="flex items-center gap-3 px-4 pb-3 text-[9px] text-gray-400">
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" />On time</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400 inline-block" />Late (&lt;30m)</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-400 inline-block" />&gt;30m late</span>
+                              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-200 inline-block" />Absent</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })}
@@ -998,12 +1239,12 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                 <div className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Who Has Pending Tasks</div>
                 <div className="space-y-2">
                   {pendingByEmployee.map(({ driver, tasks }) => {
-                    const isOpen = expandedEmployee === ('chk-' + driver.id);
+                    const isOpen = openPanel?.id === ('chk-' + driver.id) && openPanel.type === 'detail';
                     return (
                       <div key={driver.id} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
                         <button
                           className="w-full flex items-center gap-3 p-3 text-left"
-                          onClick={() => setExpandedEmployee(isOpen ? null : ('chk-' + driver.id))}
+                          onClick={() => setOpenPanel(isOpen ? null : { id: 'chk-' + driver.id, type: 'detail' })}
                         >
                           <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-sm shrink-0">
                             {(driver.fullName || '?').charAt(0).toUpperCase()}
@@ -1041,14 +1282,22 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                   <div className="text-xs font-medium text-gray-700 truncate">{t.origin}</div>
                                   {t.customerName && <div className="text-[10px] text-purple-600">{t.customerName}</div>}
                                   {t.courierName && <div className="text-[10px] text-gray-400">{t.courierName}{t.podNumber ? ` #${t.podNumber}` : ''}</div>}
+                                  {t.remark && <div className="text-[10px] text-red-500 italic truncate">"{t.remark}"</div>}
                                 </div>
-                                <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded-full font-semibold ${
-                                  t.status === 'Incomplete'   ? 'bg-red-100 text-red-700' :
-                                  t.taskStage === 'Ongoing'  ? 'bg-amber-100 text-amber-700' :
-                                                               'bg-gray-100 text-gray-500'
-                                }`}>
-                                  {t.status === 'Incomplete' ? 'Incomplete' : t.taskStage === 'Ongoing' ? 'In Progress' : 'Not Started'}
-                                </span>
+                                {t.status === 'Incomplete' ? (
+                                  <button
+                                    onClick={() => reassignTrip(t.id, t.driverId)}
+                                    className="shrink-0 text-[10px] font-bold px-2 py-1 rounded-full bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition-all"
+                                  >
+                                    ↩ Start Again
+                                  </button>
+                                ) : (
+                                  <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded-full font-semibold ${
+                                    t.taskStage === 'Ongoing' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-500'
+                                  }`}>
+                                    {t.taskStage === 'Ongoing' ? 'In Progress' : 'Not Started'}
+                                  </span>
+                                )}
                               </div>
                             ))}
                           </div>
@@ -1059,6 +1308,20 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                 </div>
               </div>
             )}
+
+            {/* Date filter */}
+            <div className="flex gap-2 mb-3 overflow-x-auto pb-1">
+              {(['today', 'week', 'month', 'all'] as const).map(f => (
+                <button key={f} onClick={() => setTaskDateFilter(f)}
+                  className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                    taskDateFilter === f
+                      ? 'bg-[#0f3d20] text-white border-[#0f3d20]'
+                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-400'
+                  }`}>
+                  {f === 'today' ? 'Today' : f === 'week' ? 'This Week' : f === 'month' ? 'This Month' : 'All Time'}
+                </button>
+              ))}
+            </div>
 
             {/* Top controls */}
             <div className="flex flex-col sm:flex-row gap-2 mb-4">
@@ -1101,20 +1364,74 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
               </div>
             )}
 
-            {/* Active tasks */}
+            {/* Active + Incomplete tasks (all non-completed) */}
             {filteredActiveTasks.length > 0 && (
               <div className="mb-5">
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
                   <span className="w-2 h-2 bg-amber-500 rounded-full inline-block" />
-                  Active Tasks ({filteredActiveTasks.length})
+                  Pending Tasks ({filteredActiveTasks.length})
+                  {incompleteTrips.length > 0 && !customerFilter && !taskSearch && (
+                    <span className="ml-1 text-[10px] text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded-full font-bold">
+                      {incompleteTrips.length} incomplete
+                    </span>
+                  )}
                 </h3>
                 <div className="space-y-2">
                   {filteredActiveTasks.map(trip => {
                     const driver = drivers.find(d => d.id === trip.driverId);
                     const isExpanded = expandedTrip === trip.id;
+                    const isIncomplete = trip.status === 'Incomplete';
+                    const isReassigning = reassigningTripId === trip.id;
                     return (
-                      <div key={trip.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-                        <button className="w-full text-left p-4" onClick={() => setExpandedTrip(isExpanded ? null : trip.id)}>
+                      <div key={trip.id} className={`rounded-2xl shadow-sm overflow-hidden ${isIncomplete ? 'border-2 border-red-300 bg-red-50' : 'border border-gray-100 bg-white'}`}>
+                        {/* Incomplete banner */}
+                        {isIncomplete && (
+                          <div className="flex items-center justify-between px-4 py-2 bg-red-100 border-b border-red-200">
+                            <span className="text-xs font-bold text-red-700 flex items-center gap-1">
+                              <AlertCircle size={12} /> Marked Incomplete
+                              {trip.remark && <span className="font-normal text-red-600"> — "{trip.remark}"</span>}
+                            </span>
+                            <button
+                              onClick={() => { setReassigningTripId(isReassigning ? null : trip.id); setReassignTo(''); }}
+                              className="text-xs font-bold text-white bg-red-600 hover:bg-red-700 px-2.5 py-1 rounded-lg transition-colors"
+                            >
+                              Reassign
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Reassign panel */}
+                        {isReassigning && (
+                          <div className="px-4 py-3 bg-white border-b border-red-200 flex items-center gap-2 flex-wrap">
+                            <select
+                              value={reassignTo}
+                              onChange={e => setReassignTo(e.target.value)}
+                              className="flex-1 min-w-0 border border-gray-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                            >
+                              <option value="">Select employee to reassign…</option>
+                              {drivers.map(d => (
+                                <option key={d.id} value={d.id}>
+                                  {d.fullName}{d.designation ? ` (${d.designation})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              onClick={() => reassignTrip(trip.id, reassignTo)}
+                              disabled={!reassignTo}
+                              className="shrink-0 px-3 py-2 bg-[#0f3d20] text-white text-xs font-bold rounded-xl disabled:opacity-40 hover:bg-emerald-900"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => { setReassigningTripId(null); setReassignTo(''); }}
+                              className="shrink-0 px-3 py-2 bg-gray-100 text-gray-600 text-xs font-bold rounded-xl hover:bg-gray-200"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+
+                        <button className={`w-full text-left p-4 ${isIncomplete ? 'bg-red-50' : ''}`} onClick={() => setExpandedTrip(isExpanded ? null : trip.id)}>
                           <div className="flex justify-between items-start gap-2">
                             <div className="flex-1 min-w-0">
                               <div className="flex gap-1.5 items-center mb-1 flex-wrap">
@@ -1140,7 +1457,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                 </div>
                               )}
                               <div className="text-sm font-medium text-gray-800 truncate">{trip.origin}</div>
-                              {driver && <div className="text-xs text-emerald-600 mt-0.5 font-medium">→ {driver.fullName}</div>}
+                              {driver && <div className={`text-xs mt-0.5 font-medium ${isIncomplete ? 'text-red-500' : 'text-emerald-600'}`}>→ {driver.fullName}</div>}
                               {(trip.courierName || trip.podNumber) && (
                                 <div className="text-xs text-gray-400 mt-0.5">
                                   {trip.courierName}{trip.podNumber ? ` #${trip.podNumber}` : ''}
@@ -1150,7 +1467,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                             <div className="flex gap-2 items-center shrink-0">
                               {trip.packagePhoto && (
                                 <img
-                                  src={trip.packagePhoto.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : trip.packagePhoto.dataUrl}
+                                  src={trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : '')}
                                   alt="pkg"
                                   className="w-10 h-10 rounded-lg object-cover border border-gray-200"
                                 />
@@ -1177,25 +1494,24 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                             )}
                             {(trip.proofPhotos || []).length > 0 && (
                               <div>
-                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Proof Photos</div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Proof Photos (tap to view)</div>
                                 <div className="flex gap-2 flex-wrap">
                                   {trip.proofPhotos!.map((p, i) => {
-                                    const src = p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : p.dataUrl;
+                                    const src = p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '');
+                                    if (!src) return null;
                                     return (
-                                      <div key={i} className="relative">
-                                        <img src={src} alt={p.kind} className="w-16 h-16 rounded-xl object-cover border border-gray-200" />
+                                      <button key={i} onClick={() => openPhoto(src, p.fileName || 'photo.jpg')} className="relative group shrink-0">
+                                        <img src={src} alt={p.kind} className="w-16 h-16 rounded-xl object-cover border border-gray-200 group-hover:border-emerald-400 transition-colors" />
                                         <span className={`absolute -bottom-0.5 left-0 right-0 text-center text-[8px] font-bold rounded-b-lg pb-0.5 ${p.kind === 'PICKUP' ? 'bg-blue-600/90 text-white' : 'bg-green-600/90 text-white'}`}>
                                           {p.kind}
                                         </span>
-                                      </div>
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
+                                          <Eye size={14} className="text-white opacity-0 group-hover:opacity-100 drop-shadow" />
+                                        </div>
+                                      </button>
                                     );
                                   })}
                                 </div>
-                              </div>
-                            )}
-                            {trip.remark && (
-                              <div className="bg-red-50 border border-red-100 rounded-xl p-2.5 text-xs text-red-700">
-                                <span className="font-bold">Remark: </span>{trip.remark}
                               </div>
                             )}
                           </div>
@@ -1207,7 +1523,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
               </div>
             )}
 
-            {/* Completed tasks */}
+            {/* Completed tasks — expandable with proof photos */}
             {completedTrips.length > 0 && !customerFilter && (
               <div className="mb-3">
                 <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
@@ -1217,47 +1533,129 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                 <div className="space-y-1.5">
                   {completedTrips.map(trip => {
                     const driver = drivers.find(d => d.id === trip.driverId);
+                    const isExpanded = expandedTrip === trip.id;
+                    const allPhotos = [
+                      ...(trip.packagePhoto ? [trip.packagePhoto] : []),
+                      ...(trip.proofPhotos || []),
+                    ];
+                    const photoCount = allPhotos.length;
                     return (
-                      <div key={trip.id} className="bg-white rounded-xl border border-gray-100 p-3 flex items-center gap-3">
-                        <CheckCircle size={15} className="text-green-500 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          {trip.customerName && (
-                            <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
-                          )}
-                          <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
-                          <div className="text-xs text-gray-400">{driver?.fullName} · {trip.taskType}</div>
-                        </div>
-                        <div className="text-xs text-gray-400 shrink-0">
-                          {new Date(trip.lastUpdated).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
+                      <div key={trip.id} className="bg-white rounded-2xl border border-green-100 overflow-hidden">
+                        <button
+                          className="w-full flex items-center gap-3 p-3 text-left"
+                          onClick={() => setExpandedTrip(isExpanded ? null : trip.id)}
+                        >
+                          <CheckCircle size={16} className="text-green-500 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            {trip.customerName && (
+                              <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
+                            )}
+                            <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
+                            <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                              <span>{driver?.fullName}</span>
+                              <span className={`font-medium ${trip.taskType === 'DELIVERY' ? 'text-green-600' : trip.taskType === 'BOTH' ? 'text-purple-600' : 'text-blue-600'}`}>
+                                {trip.taskType === 'BOTH' ? 'P+D' : trip.taskType}
+                              </span>
+                              {photoCount > 0 && (
+                                <span className="flex items-center gap-0.5 text-emerald-600 font-semibold">
+                                  <Camera size={10} /> {photoCount} photo{photoCount > 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Thumbnail strip preview */}
+                            {allPhotos.slice(0, 2).map((p, i) => (
+                              <img
+                                key={i}
+                                src={p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '')}
+                                alt={p.kind}
+                                className="w-8 h-8 rounded-lg object-cover border border-gray-200"
+                              />
+                            ))}
+                            {photoCount > 2 && (
+                              <span className="text-[10px] text-gray-400 font-medium">+{photoCount - 2}</span>
+                            )}
+                            <ChevronRight size={14} className={`text-gray-300 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                          </div>
+                        </button>
 
-            {/* Incomplete tasks */}
-            {incompleteTrips.length > 0 && !customerFilter && (
-              <div>
-                <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                  <span className="w-2 h-2 bg-red-500 rounded-full inline-block" />
-                  Incomplete ({incompleteTrips.length})
-                </h3>
-                <div className="space-y-1.5">
-                  {incompleteTrips.map(trip => {
-                    const driver = drivers.find(d => d.id === trip.driverId);
-                    return (
-                      <div key={trip.id} className="bg-white rounded-xl border border-red-100 p-3 flex items-center gap-3">
-                        <AlertCircle size={15} className="text-red-400 shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          {trip.customerName && (
-                            <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
-                          )}
-                          <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
-                          <div className="text-xs text-gray-400">{driver?.fullName}</div>
-                          {trip.remark && <div className="text-xs text-red-600 mt-0.5 italic">"{trip.remark}"</div>}
-                        </div>
+                        {isExpanded && (
+                          <div className="border-t border-green-100 px-4 pb-4 pt-3 space-y-3">
+                            {/* Package photo (admin uploaded) */}
+                            {trip.packagePhoto && (() => {
+                              const pkgSrc = trip.packagePhoto.dataUrl || (trip.packagePhoto.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : '');
+                              return pkgSrc ? (
+                                <div>
+                                  <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                    <Package size={10} /> Package Ref (Admin)
+                                  </div>
+                                  <button onClick={() => openPhoto(pkgSrc, trip.packagePhoto?.fileName || 'package.jpg')} className="relative group">
+                                    <img src={pkgSrc} alt="Package" className="w-24 h-24 rounded-xl object-cover border border-gray-200 group-hover:border-emerald-400 transition-colors" />
+                                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
+                                      <Eye size={18} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                                    </div>
+                                  </button>
+                                </div>
+                              ) : null;
+                            })()}
+
+                            {/* Proof photos (employee uploaded) */}
+                            {(trip.proofPhotos || []).length > 0 && (
+                              <div>
+                                <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2 flex items-center gap-1">
+                                  <Camera size={10} /> Proof Photos (Employee)
+                                </div>
+                                <div className="flex gap-2 flex-wrap">
+                                  {trip.proofPhotos!.map((p, i) => {
+                                    const src = p.dataUrl || (p.filePath ? `/${p.filePath.replace(/\\/g, '/')}` : '');
+                                    if (!src) return null;
+                                    return (
+                                      <button key={i} onClick={() => openPhoto(src, p.fileName || 'photo.jpg')} className="relative group shrink-0">
+                                        <img
+                                          src={src}
+                                          alt={p.kind}
+                                          className="w-20 h-20 rounded-xl object-cover border border-gray-200 group-hover:border-emerald-400 transition-colors"
+                                        />
+                                        <span className={`absolute bottom-0 left-0 right-0 text-center text-[8px] font-bold py-0.5 rounded-b-xl ${
+                                          p.kind === 'PICKUP' ? 'bg-blue-600/90 text-white' : 'bg-green-600/90 text-white'
+                                        }`}>
+                                          {p.kind}
+                                        </span>
+                                        <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-xl transition-colors flex items-center justify-center">
+                                          <Eye size={16} className="text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow" />
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                <p className="text-[10px] text-gray-400 mt-1.5">Tap any photo to view full size</p>
+                              </div>
+                            )}
+
+                            {photoCount === 0 && (
+                              <p className="text-xs text-gray-400 italic">No photos attached to this task.</p>
+                            )}
+
+                            {/* Notes / remarks */}
+                            {trip.pickupNotes && (
+                              <div className="text-xs text-gray-600 bg-gray-50 rounded-xl p-2.5">
+                                <span className="font-semibold">Notes: </span>{trip.pickupNotes}
+                              </div>
+                            )}
+                            {trip.remark && (
+                              <div className="bg-amber-50 border border-amber-100 rounded-xl p-2.5 text-xs text-amber-800">
+                                <span className="font-bold">Remark: </span>{trip.remark}
+                              </div>
+                            )}
+
+                            <div className="text-[10px] text-gray-400">
+                              Completed · {new Date(trip.lastUpdated).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                              {trip.courierName && ` · ${trip.courierName}`}
+                              {trip.podNumber && ` #${trip.podNumber}`}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1340,6 +1738,45 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
           </div>
         )}
       </div>
+
+      {/* ── Photo Lightbox ── */}
+      {lightbox && (
+        <div
+          className="fixed inset-0 z-[100] bg-black/95 flex flex-col items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
+        >
+          {/* Top bar */}
+          <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-black/60" onClick={e => e.stopPropagation()}>
+            <span className="text-white/70 text-xs font-mono truncate max-w-[60%]">{lightbox.fileName}</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => downloadPhoto(lightbox.src, lightbox.fileName)}
+                className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold px-3 py-2 rounded-xl transition-colors"
+              >
+                <Download size={14} /> Download
+              </button>
+              <button
+                onClick={() => setLightbox(null)}
+                className="w-9 h-9 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Image */}
+          <img
+            src={lightbox.src}
+            alt={lightbox.fileName}
+            className="max-w-full max-h-[80vh] rounded-xl object-contain shadow-2xl mt-14"
+            onClick={e => e.stopPropagation()}
+          />
+
+          <p className="text-white/40 text-xs mt-3" onClick={e => e.stopPropagation()}>
+            Tap outside to close
+          </p>
+        </div>
+      )}
 
       {/* ── Modals ── */}
       {showAddEmp && (
