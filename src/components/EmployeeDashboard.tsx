@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   ClipboardList, History, User, LogOut, Play, StopCircle,
-  Truck, Bike, Car, Navigation, Calendar, ChevronRight,
+  Truck, Bike, Car, Navigation, Package, Calendar, ChevronRight,
   CheckCircle, AlertCircle, Clock, Loader, Edit, Save, X, Phone, MapPin, RefreshCw
 } from 'lucide-react';
 import { User as UserType, Driver, Trip, Vehicle, WorkDay } from '../types';
@@ -18,7 +18,7 @@ type Tab = 'today' | 'history' | 'profile';
 
 const TRANSPORT_ICONS: Record<string, React.ReactNode> = {
   bike: <Bike size={18} />, truck: <Truck size={18} />, van: <Car size={18} />,
-  auto: <Navigation size={18} />, other: <Car size={18} />
+  auto: <Navigation size={18} />, porter: <Package size={18} />, other: <Car size={18} />
 };
 
 export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
@@ -63,8 +63,8 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
 
   const driverId = sessionUser.driverId || sessionUser.id || '';
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const [driversRes, vehiclesRes, tripsRes, workDayRes] = await Promise.all([
         fetch('/api/drivers'),
@@ -108,11 +108,11 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   async function manualRefresh() {
     setRefreshing(true);
-    await load();
+    await load(true);
     setRefreshing(false);
   }
   useEffect(() => {
-    const id = setInterval(load, 60_000);
+    const id = setInterval(() => load(true), 60_000);
     return () => clearInterval(id);
   }, [load]);
 
@@ -157,6 +157,19 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
         body: JSON.stringify({ status: 'In Progress', operatorName: sessionUser.fullName })
       });
       setTodayTrips(prev => prev.map(t => t.id === tripId ? { ...t, status: 'In Progress', taskStage: 'Ongoing' } : t));
+    } catch (err) { console.error(err); }
+  }
+
+  async function handleChangeMode(payload: { transportMode: string; role?: string; vehicleId?: string; partnerId?: string }) {
+    if (!workDay) return;
+    try {
+      const res = await fetch(`/api/workday/${workDay.id}/transport`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (res.ok) setWorkDay(data.workDay);
     } catch (err) { console.error(err); }
   }
 
@@ -461,7 +474,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   <Clock size={12} /> In Progress ({ongoingToday.length})
                 </h3>
                 {ongoingToday.map(t => (
-                  <TaskCard key={t.id} trip={t} onStartTask={handleStartTask} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} onMarkComplete={handleMarkComplete} uploading={uploading} />
+                  <TaskCard key={t.id} trip={t} workDay={workDay} vehicles={vehicles} drivers={drivers} onStartTask={handleStartTask} onChangeMode={handleChangeMode} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} onMarkComplete={handleMarkComplete} uploading={uploading} />
                 ))}
               </div>
             )}
@@ -473,7 +486,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   <ClipboardList size={12} /> Upcoming ({upcomingToday.length})
                 </h3>
                 {upcomingToday.map(t => (
-                  <TaskCard key={t.id} trip={t} onStartTask={handleStartTask} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
+                  <TaskCard key={t.id} trip={t} workDay={workDay} vehicles={vehicles} drivers={drivers} onStartTask={handleStartTask} onChangeMode={handleChangeMode} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
                 ))}
               </div>
             )}
@@ -485,7 +498,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   <CheckCircle size={12} /> Completed ({completedToday.length})
                 </h3>
                 {completedToday.map(t => (
-                  <TaskCard key={t.id} trip={t} onStartTask={handleStartTask} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
+                  <TaskCard key={t.id} trip={t} workDay={workDay} vehicles={vehicles} drivers={drivers} onStartTask={handleStartTask} onChangeMode={handleChangeMode} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
                 ))}
               </div>
             )}
@@ -497,7 +510,7 @@ export function EmployeeDashboard({ sessionUser, onLogout }: Props) {
                   <AlertCircle size={12} /> Incomplete ({incompleteToday.length})
                 </h3>
                 {incompleteToday.map(t => (
-                  <TaskCard key={t.id} trip={t} onStartTask={handleStartTask} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
+                  <TaskCard key={t.id} trip={t} workDay={workDay} vehicles={vehicles} drivers={drivers} onStartTask={handleStartTask} onChangeMode={handleChangeMode} onUploadPhoto={handleUploadPhoto} onMarkIncomplete={handleMarkIncomplete} uploading={uploading} />
                 ))}
               </div>
             )}

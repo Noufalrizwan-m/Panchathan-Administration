@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, MapPin, Loader, Bike, Truck, Car, Navigation, CheckSquare, Square, User2, Users, CheckCircle } from 'lucide-react';
+import { X, MapPin, Loader, Bike, Truck, Car, Navigation, CheckSquare, Square, User2, Users, CheckCircle, Package, Camera } from 'lucide-react';
 import { Trip, Vehicle, Driver, WorkDay } from '../types';
 
 interface DailyPlanModalProps {
@@ -13,14 +13,15 @@ interface DailyPlanModalProps {
   onClose: () => void;
 }
 
-type TransportMode = 'bike' | 'auto' | 'van' | 'truck' | 'other';
+type TransportMode = 'bike' | 'auto' | 'van' | 'truck' | 'porter' | 'other';
 
 const TRANSPORT_OPTIONS: { mode: TransportMode; label: string; icon: React.ReactNode; bigIcon: React.ReactNode }[] = [
-  { mode: 'bike',  label: 'Bike',  icon: <Bike size={22} />,       bigIcon: <Bike size={40} /> },
-  { mode: 'truck', label: 'Truck', icon: <Truck size={22} />,      bigIcon: <Truck size={40} /> },
-  { mode: 'van',   label: 'Van',   icon: <Car size={22} />,        bigIcon: <Car size={40} /> },
-  { mode: 'auto',  label: 'Auto',  icon: <Navigation size={22} />, bigIcon: <Navigation size={40} /> },
-  { mode: 'other', label: 'Other', icon: <Car size={22} />,        bigIcon: <Car size={40} /> },
+  { mode: 'bike',   label: 'Bike',   icon: <Bike size={22} />,        bigIcon: <Bike size={40} /> },
+  { mode: 'truck',  label: 'Truck',  icon: <Truck size={22} />,       bigIcon: <Truck size={40} /> },
+  { mode: 'van',    label: 'Van',    icon: <Car size={22} />,         bigIcon: <Car size={40} /> },
+  { mode: 'auto',   label: 'Auto',   icon: <Navigation size={22} />,  bigIcon: <Navigation size={40} /> },
+  { mode: 'porter', label: 'Porter', icon: <Package size={22} />,     bigIcon: <Package size={40} /> },
+  { mode: 'other',  label: 'Other',  icon: <Car size={22} />,         bigIcon: <Car size={40} /> },
 ];
 
 function getCurrentTimeISO(): string {
@@ -43,6 +44,12 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
   const [locationError, setLocationError] = useState('');
   const [selectedTripIds, setSelectedTripIds] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // Porter transport fields
+  const [porterBookingId, setPorterBookingId] = useState('');
+  const [porterVehicleNumber, setPorterVehicleNumber] = useState('');
+  const [porterAmount, setPorterAmount] = useState('');
+  const [porterVehiclePhoto, setPorterVehiclePhoto] = useState('');
+  const [porterPhotoPreview, setPorterPhotoPreview] = useState('');
 
   const truckVehicles = vehicles.filter(v => v.vehicleType === 'Truck' && v.status !== 'Maintenance');
   const upcomingTrips = assignedTrips.filter(t => t.taskStage === 'Upcoming' || !t.taskStage);
@@ -98,6 +105,10 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
         vehicleId: selectedVehicleId || undefined,
         role: role || undefined,
         partnerId: selectedPartnerId || undefined,
+        porterBookingId: porterBookingId || undefined,
+        porterVehicleNumber: porterVehicleNumber || undefined,
+        porterAmount: porterAmount || undefined,
+        porterVehiclePhoto: porterVehiclePhoto || undefined,
         startTime,
         startLocation: location,
         plannedTripIds: selectedTripIds
@@ -120,7 +131,10 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
   const selectedVehicle = vehicles.find(v => v.id === selectedVehicleId);
 
   const canProceedStep1 = !!transport;
-  const canProceedStep2 = transport !== 'truck' || (role === 'driver' && selectedVehicleId) || (role === 'co-passenger' && selectedPartnerId) || !role;
+  const canProceedStep2 =
+    (transport === 'truck'   && ((role === 'driver' && !!selectedVehicleId) || (role === 'co-passenger' && !!selectedPartnerId))) ||
+    (transport === 'porter'  && !!porterVehicleNumber && !!porterAmount) ||
+    (transport !== 'truck'   && transport !== 'porter');
   const canProceedStep3 = !!location && !locationLoading;
 
   return (
@@ -245,8 +259,80 @@ export function DailyPlanModal({ userId, employeeId, employeeName, assignedTrips
             </div>
           )}
 
-          {/* STEP 2 for non-truck — show selection confirmation */}
-          {step === 2 && transport !== 'truck' && (() => {
+          {/* STEP 2 for porter */}
+          {step === 2 && transport === 'porter' && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="w-10 h-10 rounded-full bg-orange-500 flex items-center justify-center text-white"><Package size={20} /></div>
+                <div><div className="text-sm font-bold text-gray-800">Porter</div><div className="text-xs text-gray-500">Selected transport</div></div>
+                <CheckCircle size={18} className="text-green-500 ml-auto" />
+              </div>
+              <h3 className="text-sm font-semibold text-gray-700">Porter Vehicle Details</h3>
+
+              {/* Vehicle Number */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Vehicle Number <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={porterVehicleNumber}
+                  onChange={e => setPorterVehicleNumber(e.target.value.toUpperCase())}
+                  placeholder="e.g. TN 09 AB 1234"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              </div>
+
+              {/* Amount */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Amount Paid (₹) <span className="text-red-500">*</span></label>
+                <input
+                  type="number"
+                  value={porterAmount}
+                  onChange={e => setPorterAmount(e.target.value)}
+                  placeholder="e.g. 350"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              </div>
+
+              {/* Booking ID (optional) */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Booking ID <span className="text-gray-400">(optional)</span></label>
+                <input
+                  type="text"
+                  value={porterBookingId}
+                  onChange={e => setPorterBookingId(e.target.value)}
+                  placeholder="Porter booking reference"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                />
+              </div>
+
+              {/* Vehicle Photo */}
+              <div>
+                <label className="text-xs font-semibold text-gray-600 block mb-1">Vehicle Photo <span className="text-gray-400">(optional)</span></label>
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <div className="w-20 h-20 rounded-xl overflow-hidden border-2 border-dashed border-gray-300 group-hover:border-orange-400 transition-colors flex items-center justify-center shrink-0 bg-gray-50">
+                    {porterPhotoPreview
+                      ? <img src={porterPhotoPreview} alt="vehicle" className="w-full h-full object-cover" />
+                      : <Camera size={24} className="text-gray-300" />}
+                  </div>
+                  <div>
+                    <div className="text-xs font-semibold text-orange-600">{porterPhotoPreview ? 'Change photo' : 'Take vehicle photo'}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">Photo of Porter vehicle</div>
+                  </div>
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setPorterPhotoPreview(URL.createObjectURL(f));
+                    const reader = new FileReader();
+                    reader.onload = () => setPorterVehiclePhoto(reader.result as string);
+                    reader.readAsDataURL(f);
+                  }} />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2 for non-truck, non-porter — show selection confirmation */}
+          {step === 2 && transport !== 'truck' && transport !== 'porter' && (() => {
             const opt = TRANSPORT_OPTIONS.find(o => o.mode === transport);
             return (
               <div>

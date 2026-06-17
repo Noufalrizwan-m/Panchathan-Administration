@@ -1,16 +1,34 @@
 import React, { useState } from 'react';
-import { Truck, AlertCircle, CheckCircle, Camera, ChevronDown, ChevronUp, Phone, Building2, ArrowRight, X, Download, Calendar } from 'lucide-react';
-import { Trip } from '../types';
+import { Truck, AlertCircle, CheckCircle, Camera, ChevronDown, ChevronUp, Phone, Building2, ArrowRight, X, Download, Calendar, Bike, Car, Navigation, User2, Users, Package, Edit } from 'lucide-react';
+import { Trip, WorkDay, Vehicle, Driver } from '../types';
 
 interface TaskCardProps {
   key?: React.Key;
   trip: Trip;
+  workDay?: WorkDay | null;
+  vehicles?: Vehicle[];
+  drivers?: Driver[];
   onStartTask: (tripId: string) => void;
+  onChangeMode?: (payload: { transportMode: string; role?: string; vehicleId?: string; partnerId?: string; porterBookingId?: string; porterVehicleNumber?: string; porterAmount?: string; porterVehiclePhoto?: string }) => void;
   onUploadPhoto: (tripId: string, kind: 'PICKUP' | 'DELIVERY', file: File) => void;
   onMarkIncomplete: (tripId: string, reason: string) => void;
   onMarkComplete?: (tripId: string) => void;
   uploading?: boolean;
 }
+
+type TransportMode = 'bike' | 'auto' | 'van' | 'truck' | 'porter' | 'other';
+const TRANSPORT_OPTIONS: { mode: TransportMode; label: string; icon: React.ReactNode; bigIcon: React.ReactNode }[] = [
+  { mode: 'bike',   label: 'Bike',   icon: <Bike size={22} />,        bigIcon: <Bike size={40} /> },
+  { mode: 'truck',  label: 'Truck',  icon: <Truck size={22} />,       bigIcon: <Truck size={40} /> },
+  { mode: 'van',    label: 'Van',    icon: <Car size={22} />,         bigIcon: <Car size={40} /> },
+  { mode: 'auto',   label: 'Auto',   icon: <Navigation size={22} />,  bigIcon: <Navigation size={40} /> },
+  { mode: 'porter', label: 'Porter', icon: <Package size={22} />,     bigIcon: <Package size={40} /> },
+  { mode: 'other',  label: 'Other',  icon: <Car size={22} />,         bigIcon: <Car size={40} /> },
+];
+const MODE_ICON: Record<string, React.ReactNode> = {
+  bike: <Bike size={16} />, truck: <Truck size={16} />, van: <Car size={16} />,
+  auto: <Navigation size={16} />, porter: <Package size={16} />, other: <Car size={16} />,
+};
 
 const STAGE_CONFIG: Record<string, { label: string; color: string; bg: string; border: string }> = {
   Upcoming:   { label: 'Upcoming',     color: 'text-blue-600',   bg: 'bg-blue-50',   border: 'border-blue-400' },
@@ -38,11 +56,65 @@ function formatAssignedDate(iso: string): string {
   return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined });
 }
 
-export function TaskCard({ trip, onStartTask, onUploadPhoto, onMarkIncomplete, onMarkComplete, uploading }: TaskCardProps) {
+export function TaskCard({ trip, workDay, vehicles = [], drivers = [], onStartTask, onChangeMode, onUploadPhoto, onMarkIncomplete, onMarkComplete, uploading }: TaskCardProps) {
   const [expanded, setExpanded] = useState(false);
   const [remarkText, setRemarkText] = useState('');
   const [showRemarkBox, setShowRemarkBox] = useState(false);
   const [lightbox, setLightbox] = useState<{ src: string; fileName: string } | null>(null);
+  // Mode confirm flow (mirrors DailyPlanModal steps 1 + 2)
+  const [confirmStep, setConfirmStep] = useState(0); // 0=hidden, 1=mode, 2=role/vehicle/porter
+  const [selectedMode, setSelectedMode] = useState<TransportMode>((workDay?.transportMode as TransportMode) || 'bike');
+  const [selectedRole, setSelectedRole] = useState<'driver' | 'co-passenger' | ''>((workDay?.role as any) || '');
+  const [selectedVehicleId, setSelectedVehicleId] = useState(workDay?.vehicleId || '');
+  const [selectedPartnerId, setSelectedPartnerId] = useState(workDay?.partnerId || '');
+  const [porterBookingId, setPorterBookingId] = useState(workDay?.porterBookingId || '');
+  const [porterVehicleNumber, setPorterVehicleNumber] = useState(workDay?.porterVehicleNumber || '');
+  const [porterAmount, setPorterAmount] = useState(workDay?.porterAmount || '');
+  const [porterVehiclePhoto, setPorterVehiclePhoto] = useState('');
+  const [porterPhotoPreview, setPorterPhotoPreview] = useState(workDay?.porterVehiclePhoto || '');
+  const [editOnlyMode, setEditOnlyMode] = useState(false);
+
+  const truckVehicles = vehicles.filter(v => v.vehicleType === 'Truck' && v.status !== 'Maintenance');
+  const activeDrivers = drivers.filter(d => d.status === 'Active' || d.status === 'Available');
+
+  function openConfirm(editOnly = false) {
+    setEditOnlyMode(editOnly);
+    setSelectedMode((workDay?.transportMode as TransportMode) || 'bike');
+    setSelectedRole((workDay?.role as any) || '');
+    setSelectedVehicleId(workDay?.vehicleId || '');
+    setSelectedPartnerId(workDay?.partnerId || '');
+    setPorterBookingId(workDay?.porterBookingId || '');
+    setPorterVehicleNumber(workDay?.porterVehicleNumber || '');
+    setPorterAmount(workDay?.porterAmount || '');
+    setPorterVehiclePhoto('');
+    setPorterPhotoPreview(workDay?.porterVehiclePhoto || '');
+    setConfirmStep(1);
+  }
+
+  function canProceedStep2() {
+    if (selectedMode === 'truck') {
+      if (selectedRole === 'driver') return !!selectedVehicleId;
+      if (selectedRole === 'co-passenger') return !!selectedPartnerId;
+      return false;
+    }
+    if (selectedMode === 'porter') return !!porterVehicleNumber && !!porterAmount;
+    return true;
+  }
+
+  function confirmAndStart() {
+    onChangeMode?.({
+      transportMode: selectedMode,
+      role: selectedRole || undefined,
+      vehicleId: selectedVehicleId || undefined,
+      partnerId: selectedPartnerId || undefined,
+      porterBookingId: porterBookingId || undefined,
+      porterVehicleNumber: porterVehicleNumber || undefined,
+      porterAmount: porterAmount || undefined,
+      porterVehiclePhoto: porterVehiclePhoto || undefined,
+    });
+    if (!editOnlyMode) onStartTask(trip.id);
+    setConfirmStep(0);
+  }
 
   function openPhoto(src: string, fileName = 'photo.jpg') {
     if (src) setLightbox({ src, fileName });
@@ -86,6 +158,202 @@ export function TaskCard({ trip, onStartTask, onUploadPhoto, onMarkIncomplete, o
     setShowRemarkBox(false);
   }
 
+  // ── Inline mode-confirm panel (mirrors DailyPlanModal steps 1 & 2) ──
+  function ModeConfirmPanel() {
+    const opt = TRANSPORT_OPTIONS.find(o => o.mode === selectedMode);
+    return (
+      <div className="border border-blue-200 rounded-xl overflow-hidden">
+        {/* Mini header */}
+        <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b border-blue-100">
+          <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">
+            {editOnlyMode
+              ? (confirmStep === 1 ? 'Change transport mode' : 'Update details')
+              : (confirmStep === 1 ? 'How are you travelling?' : selectedMode === 'truck' ? 'Your role in the truck' : 'Transport confirmed')}
+          </span>
+          <button onClick={() => setConfirmStep(0)} className="text-blue-400 hover:text-blue-600"><X size={14} /></button>
+        </div>
+
+        <div className="p-3 space-y-3 bg-white">
+          {/* STEP 1 — Mode picker (same 3-col grid as DailyPlanModal) */}
+          {confirmStep === 1 && (
+            <div className="grid grid-cols-3 gap-2">
+              {TRANSPORT_OPTIONS.map(o => (
+                <button
+                  key={o.mode}
+                  onClick={() => setSelectedMode(o.mode)}
+                  className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 text-xs font-semibold transition-all active:scale-95 ${
+                    selectedMode === o.mode
+                      ? 'border-blue-500 bg-blue-50 text-blue-700'
+                      : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                  }`}
+                >
+                  {o.icon}{o.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* STEP 2 — Truck: driver/co-passenger */}
+          {confirmStep === 2 && selectedMode === 'truck' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-2.5 bg-gray-50 rounded-xl border border-gray-200">
+                <div className="w-8 h-8 rounded-full bg-gray-800 flex items-center justify-center text-white shrink-0"><Truck size={16} /></div>
+                <div><div className="text-sm font-bold text-gray-800">Truck</div><div className="text-[10px] text-gray-500">Selected transport</div></div>
+                <CheckCircle size={16} className="text-green-500 ml-auto" />
+              </div>
+              <div className="text-xs font-semibold text-gray-700">What is your role?</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setSelectedRole('driver')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 text-sm font-semibold transition-all active:scale-95 ${selectedRole === 'driver' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                >
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedRole === 'driver' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}><User2 size={20} /></div>
+                  Driver
+                  {selectedRole === 'driver' && <span className="text-[10px] text-blue-500 font-normal">Selected</span>}
+                </button>
+                <button
+                  onClick={() => setSelectedRole('co-passenger')}
+                  className={`flex flex-col items-center gap-2 p-4 rounded-2xl border-2 text-sm font-semibold transition-all active:scale-95 ${selectedRole === 'co-passenger' ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}
+                >
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center ${selectedRole === 'co-passenger' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}><Users size={20} /></div>
+                  Co-Passenger
+                  {selectedRole === 'co-passenger' && <span className="text-[10px] text-blue-500 font-normal">Selected</span>}
+                </button>
+              </div>
+              {selectedRole === 'driver' && (
+                <div>
+                  <div className="text-xs font-semibold text-gray-600 mb-1.5">Select Your Truck</div>
+                  <div className="space-y-1.5">
+                    {truckVehicles.length === 0 && <p className="text-xs text-gray-400">No trucks available.</p>}
+                    {truckVehicles.map(v => (
+                      <button key={v.id} onClick={() => setSelectedVehicleId(v.id)}
+                        className={`w-full text-left p-2.5 rounded-xl border-2 transition-all ${selectedVehicleId === v.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                        <div className="flex justify-between items-center">
+                          <div><div className="font-semibold text-sm text-gray-800">{v.plate}</div><div className="text-xs text-gray-500">{v.make} {v.model}</div></div>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${v.status === 'Idle' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{v.status}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedRole === 'co-passenger' && (
+                <div>
+                  <div className="text-xs font-semibold text-gray-600 mb-1.5">Select Your Driver Partner</div>
+                  <div className="space-y-1.5">
+                    {activeDrivers.map(d => (
+                      <button key={d.id} onClick={() => setSelectedPartnerId(d.id)}
+                        className={`w-full text-left p-2.5 rounded-xl border-2 transition-all ${selectedPartnerId === d.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'}`}>
+                        <div className="flex justify-between items-center">
+                          <div><div className="font-semibold text-sm text-gray-800">{d.fullName}</div><div className="text-xs text-gray-500">{d.employeeCode || d.id}</div></div>
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${d.status === 'Available' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'}`}>{d.status}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* STEP 2 — Porter details */}
+          {confirmStep === 2 && selectedMode === 'porter' && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 p-2.5 bg-orange-50 rounded-xl border border-orange-200">
+                <div className="w-8 h-8 rounded-full bg-orange-500 flex items-center justify-center text-white shrink-0"><Package size={16} /></div>
+                <div><div className="text-sm font-bold text-gray-800">Porter</div><div className="text-[10px] text-gray-500">Enter vehicle details</div></div>
+                <CheckCircle size={16} className="text-green-500 ml-auto" />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Vehicle Number <span className="text-red-500">*</span></label>
+                <input type="text" value={porterVehicleNumber} onChange={e => setPorterVehicleNumber(e.target.value.toUpperCase())}
+                  placeholder="TN 09 AB 1234"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Amount Paid (₹) <span className="text-red-500">*</span></label>
+                <input type="number" value={porterAmount} onChange={e => setPorterAmount(e.target.value)}
+                  placeholder="e.g. 350"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Booking ID <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input type="text" value={porterBookingId} onChange={e => setPorterBookingId(e.target.value)}
+                  placeholder="Porter booking reference"
+                  className="w-full border border-gray-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400" />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-gray-600 uppercase tracking-wide block mb-1">Vehicle Photo <span className="text-gray-400 font-normal">(optional)</span></label>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <div className="w-16 h-16 rounded-xl overflow-hidden border-2 border-dashed border-gray-300 flex items-center justify-center shrink-0 bg-gray-50">
+                    {porterPhotoPreview
+                      ? <img src={porterPhotoPreview} alt="vehicle" className="w-full h-full object-cover" />
+                      : <Camera size={20} className="text-gray-300" />}
+                  </div>
+                  <div className="text-xs text-orange-600 font-semibold">{porterPhotoPreview ? 'Change photo' : 'Take vehicle photo'}</div>
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (!f) return;
+                    setPorterPhotoPreview(URL.createObjectURL(f));
+                    const reader = new FileReader();
+                    reader.onload = () => setPorterVehiclePhoto(reader.result as string);
+                    reader.readAsDataURL(f);
+                  }} />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2 — Non-truck, non-porter: big icon confirmation */}
+          {confirmStep === 2 && selectedMode !== 'truck' && selectedMode !== 'porter' && (
+            <div className="flex flex-col items-center py-5 gap-3 rounded-xl bg-blue-50 border border-blue-200">
+              <div className="w-16 h-16 rounded-full bg-blue-600 flex items-center justify-center text-white shadow-md shadow-blue-200">
+                {opt?.bigIcon}
+              </div>
+              <div className="text-center">
+                <div className="text-2xl font-black text-blue-800 capitalize">{opt?.label}</div>
+                <div className="text-xs text-blue-500 mt-0.5">Selected mode</div>
+              </div>
+              <div className="flex items-center gap-1.5 text-sm text-green-700 font-semibold bg-green-100 px-3 py-1.5 rounded-full">
+                <CheckCircle size={14} /> Confirmed
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer buttons */}
+        <div className="flex gap-2 px-3 pb-3 bg-white">
+          {confirmStep > 1 && (
+            <button onClick={() => setConfirmStep(s => s - 1)} className="flex-1 py-2.5 border border-gray-300 text-gray-600 rounded-xl text-sm font-semibold">Back</button>
+          )}
+          {confirmStep === 1 ? (
+            <button
+              onClick={() => setConfirmStep(2)}
+              disabled={!selectedMode}
+              className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
+            >
+              Continue
+            </button>
+          ) : (
+            <button
+              onClick={confirmAndStart}
+              disabled={!canProceedStep2()}
+              className="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold disabled:opacity-40 flex items-center justify-center gap-1.5"
+            >
+              {editOnlyMode
+                ? <><Edit size={14} /> Save Changes</>
+                : <>{MODE_ICON[selectedMode]} Start Task</>}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const packagePhotoUrl = trip.packagePhoto?.dataUrl
     || (trip.packagePhoto?.filePath ? `/${trip.packagePhoto.filePath.replace(/\\/g, '/')}` : undefined);
 
@@ -103,6 +371,16 @@ export function TaskCard({ trip, onStartTask, onUploadPhoto, onMarkIncomplete, o
             </span>
             {trip.porter?.enabled && (
               <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">PORTER</span>
+            )}
+            {workDay?.transportMode && confirmStep === 0 && (
+              <button
+                onClick={e => { e.stopPropagation(); setExpanded(true); openConfirm(true); }}
+                className="inline-flex items-center gap-1 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-600 border border-sky-200 hover:bg-sky-100 active:scale-95 transition-all"
+              >
+                {MODE_ICON[workDay.transportMode]}
+                <span className="capitalize">{workDay.transportMode}</span>
+                <Edit size={9} className="ml-0.5 text-sky-400" />
+              </button>
             )}
             <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${stageConf.bg} ${stageConf.color}`}>
               {stageConf.label}
@@ -275,14 +553,12 @@ export function TaskCard({ trip, onStartTask, onUploadPhoto, onMarkIncomplete, o
             <div className="space-y-2">
 
               {/* Start task */}
-              {stage === 'Upcoming' && (
-                <button
-                  onClick={() => onStartTask(trip.id)}
-                  className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 active:scale-95 transition-all"
-                >
+              {stage === 'Upcoming' && confirmStep === 0 && (
+                <button onClick={() => openConfirm()} className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 active:scale-95 transition-all">
                   Start Task
                 </button>
               )}
+              {stage === 'Upcoming' && confirmStep > 0 && <ModeConfirmPanel />}
 
               {stage === 'Ongoing' && (
                 <>
@@ -386,12 +662,13 @@ export function TaskCard({ trip, onStartTask, onUploadPhoto, onMarkIncomplete, o
               </div>
 
               {/* Start Again → goes directly to Ongoing */}
-              <button
-                onClick={() => onStartTask(trip.id)}
-                className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2"
-              >
-                ↩ Start Again
-              </button>
+              {confirmStep === 0 ? (
+                <button onClick={() => openConfirm()} className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-2">
+                  ↩ Start Again
+                </button>
+              ) : (
+                <ModeConfirmPanel />
+              )}
 
               {/* Upload any missing proof photos */}
               <div className={`grid gap-2 ${needsPickup && needsDelivery ? 'grid-cols-2' : 'grid-cols-1'}`}>

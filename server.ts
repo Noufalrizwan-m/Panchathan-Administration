@@ -425,6 +425,14 @@ async function startServer() {
   // WORK DAYS
   // ----------------------------------------------------------------
 
+  app.get('/api/workdays', async (_req, res) => {
+    try {
+      const from = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const workDays = await db.getWorkDays(from);
+      return res.json({ workDays });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
+  });
+
   app.get('/api/workday/today/:userId', async (req, res) => {
     const { userId } = req.params;
     const date = new Date().toISOString().slice(0, 10);
@@ -494,6 +502,30 @@ async function startServer() {
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
+  });
+
+  app.patch('/api/workday/:id/transport', async (req, res) => {
+    const { id } = req.params;
+    const { transportMode, role, vehicleId, partnerId,
+            porterBookingId, porterVehicleNumber, porterAmount, porterVehiclePhoto } = req.body;
+    const valid = ['bike', 'auto', 'van', 'truck', 'porter', 'other'];
+    if (!valid.includes(transportMode)) return res.status(400).json({ error: 'Invalid transport mode.' });
+    try {
+      const wd = await db.getWorkDayById(id);
+      if (!wd) return res.status(404).json({ error: 'Workday not found.' });
+      const updated = await db.saveWorkDay({
+        ...wd,
+        transportMode,
+        ...(role                !== undefined ? { role }                : {}),
+        ...(vehicleId           !== undefined ? { vehicleId }           : {}),
+        ...(partnerId           !== undefined ? { partnerId }           : {}),
+        ...(porterBookingId     !== undefined ? { porterBookingId }     : {}),
+        ...(porterVehicleNumber !== undefined ? { porterVehicleNumber } : {}),
+        ...(porterAmount        !== undefined ? { porterAmount }        : {}),
+        ...(porterVehiclePhoto  !== undefined ? { porterVehiclePhoto }  : {}),
+      });
+      return res.json({ success: true, workDay: updated });
+    } catch (err: any) { return res.status(500).json({ error: err.message }); }
   });
 
   app.patch('/api/workday/:id/end', async (req, res) => {

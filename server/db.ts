@@ -138,10 +138,14 @@ const WorkDaySchema = new mongoose.Schema<WorkDay>({
   id:            { type: String, required: true, unique: true },
   userId:        { type: String, required: true, index: true },
   date:          { type: String, required: true },
-  transportMode: { type: String, required: true, enum: ['bike', 'auto', 'van', 'truck', 'other'] },
-  vehicleId:     { type: String },
-  role:          { type: String, enum: ['driver', 'co-passenger'] },
-  partnerId:     { type: String },
+  transportMode:       { type: String, required: true, enum: ['bike', 'auto', 'van', 'truck', 'porter', 'other'] },
+  vehicleId:           { type: String },
+  role:                { type: String, enum: ['driver', 'co-passenger'] },
+  partnerId:           { type: String },
+  porterBookingId:     { type: String },
+  porterVehicleNumber: { type: String },
+  porterAmount:        { type: String },
+  porterVehiclePhoto:  { type: String },
   startTime:     { type: String, required: true },
   startLocation: { type: GeoSchema, required: true },
   endTime:       { type: String },
@@ -455,6 +459,17 @@ class Database {
       } catch (e) { console.error(e); }
     }
     return this.memDb.workDays.find(w => w.id === id);
+  }
+
+  async getWorkDays(fromDate?: string): Promise<WorkDay[]> {
+    if (this.isMongoConnected) {
+      try {
+        const q: any = fromDate ? { date: { $gte: fromDate } } : {};
+        return (await WorkDayModel.find(q).sort({ date: -1 }).lean()) as unknown as WorkDay[];
+      } catch (e) { console.error('[DB] getWorkDays error', e); }
+    }
+    const wds = fromDate ? this.memDb.workDays.filter(w => w.date >= fromDate) : this.memDb.workDays;
+    return wds.sort((a, b) => b.date.localeCompare(a.date));
   }
 
   async getWorkDayHistory(userId: string, limit = 30): Promise<WorkDay[]> {

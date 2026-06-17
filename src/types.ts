@@ -138,10 +138,15 @@ export interface WorkDay {
   id: string;
   userId: string;
   date: string;           // YYYY-MM-DD
-  transportMode: 'bike' | 'auto' | 'van' | 'truck' | 'other';
+  transportMode: 'bike' | 'auto' | 'van' | 'truck' | 'porter' | 'other';
   vehicleId?: string;
   role?: 'driver' | 'co-passenger';
   partnerId?: string;
+  // Porter transport fields
+  porterBookingId?: string;
+  porterVehicleNumber?: string;
+  porterAmount?: string;
+  porterVehiclePhoto?: string;  // dataUrl
   startTime: string;
   startLocation: GeoLocation;
   endTime?: string;

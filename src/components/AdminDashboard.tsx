@@ -4,7 +4,7 @@ import {
   CheckCircle, AlertCircle, Package, LogOut, RefreshCw,
   ChevronDown, ChevronRight, ChevronUp, Eye, Camera, Loader, Shield,
   Building2, Star, Award, Filter, Phone, MapPin, Clock, Download,
-  Calendar, ChevronLeft, CalendarDays
+  Calendar, ChevronLeft, CalendarDays, Bike, Car, Navigation, UserCheck
 } from 'lucide-react';
 import { User as UserType, Vehicle, Driver, Trip, ActivityLog, WorkDay } from '../types';
 
@@ -19,6 +19,40 @@ type Tab = 'employees' | 'vehicles' | 'tasks' | 'activity';
 const COURIER_OPTIONS = [
   'BlueDart', 'DTDC', 'FedEx India', 'Delhivery', 'Ekart', 'Ecom Express',
   'India Post', 'Aramex', 'DHL Express', 'Xpressbees', 'Porter', 'Other',
+];
+
+const TRANSPORT_ICON: Record<string, React.ReactNode> = {
+  bike:   <Bike size={10} />,
+  truck:  <Truck size={10} />,
+  van:    <Car size={10} />,
+  auto:   <Navigation size={10} />,
+  porter: <Package size={10} />,
+  other:  <Car size={10} />,
+};
+const TRANSPORT_STYLE: Record<string, string> = {
+  bike:   'bg-sky-50 text-sky-600',
+  truck:  'bg-orange-50 text-orange-600',
+  van:    'bg-violet-50 text-violet-600',
+  auto:   'bg-yellow-50 text-yellow-700',
+  porter: 'bg-amber-50 text-amber-700',
+  other:  'bg-gray-100 text-gray-500',
+};
+function TransportBadge({ mode }: { mode: string }) {
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-md ${TRANSPORT_STYLE[mode] || TRANSPORT_STYLE.other}`}>
+      {TRANSPORT_ICON[mode] || TRANSPORT_ICON.other}
+      {mode.charAt(0).toUpperCase() + mode.slice(1)}
+    </span>
+  );
+}
+
+const ADMIN_TRANSPORT_OPTIONS = [
+  { mode: 'bike',   label: 'Bike',   icon: <Bike size={18} /> },
+  { mode: 'truck',  label: 'Truck',  icon: <Truck size={18} /> },
+  { mode: 'van',    label: 'Van',    icon: <Car size={18} /> },
+  { mode: 'auto',   label: 'Auto',   icon: <Navigation size={18} /> },
+  { mode: 'porter', label: 'Porter', icon: <Package size={18} /> },
+  { mode: 'other',  label: 'Other',  icon: <Car size={18} /> },
 ];
 
 function StatusBadge({ status, small }: { status: string; small?: boolean }) {
@@ -495,6 +529,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   const [drivers, setDrivers] = useState<Driver[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
+  const [workDays, setWorkDays] = useState<WorkDay[]>([]);
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [userMap, setUserMap] = useState<Record<string, { username: string }>>({});
   const [loading, setLoading] = useState(true);
@@ -521,6 +556,16 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   const [editTaskPhoto, setEditTaskPhoto] = useState<File | null>(null);
   const [editTaskPhotoPreview, setEditTaskPhotoPreview] = useState('');
   const [editTaskSaving, setEditTaskSaving] = useState(false);
+  // Admin transport mode editing
+  const [editingTransportTripId, setEditingTransportTripId] = useState<string | null>(null);
+  const [adminTransportMode, setAdminTransportMode] = useState('bike');
+  const [adminTransportRole, setAdminTransportRole] = useState('');
+  const [adminTransportVehicleId, setAdminTransportVehicleId] = useState('');
+  const [adminTransportPartnerId, setAdminTransportPartnerId] = useState('');
+  const [adminPorterVehicleNumber, setAdminPorterVehicleNumber] = useState('');
+  const [adminPorterAmount, setAdminPorterAmount] = useState('');
+  const [adminPorterBookingId, setAdminPorterBookingId] = useState('');
+  const [adminTransportSaving, setAdminTransportSaving] = useState(false);
 
   function openPhoto(src: string, fileName = 'photo.jpg') {
     if (src) setLightbox({ src, fileName });
@@ -532,20 +577,59 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
     a.click();
   }
 
+  function openAdminTransport(tripId: string, workDay: WorkDay) {
+    setEditingTransportTripId(tripId);
+    setAdminTransportMode(workDay.transportMode || 'bike');
+    setAdminTransportRole(workDay.role || '');
+    setAdminTransportVehicleId(workDay.vehicleId || '');
+    setAdminTransportPartnerId(workDay.partnerId || '');
+    setAdminPorterVehicleNumber(workDay.porterVehicleNumber || '');
+    setAdminPorterAmount(workDay.porterAmount || '');
+    setAdminPorterBookingId(workDay.porterBookingId || '');
+  }
+
+  async function saveAdminTransport(workDay: WorkDay) {
+    setAdminTransportSaving(true);
+    try {
+      const body: Record<string, string> = { transportMode: adminTransportMode };
+      if (adminTransportRole) body.role = adminTransportRole;
+      if (adminTransportVehicleId) body.vehicleId = adminTransportVehicleId;
+      if (adminTransportPartnerId) body.partnerId = adminTransportPartnerId;
+      if (adminPorterVehicleNumber) body.porterVehicleNumber = adminPorterVehicleNumber;
+      if (adminPorterAmount) body.porterAmount = adminPorterAmount;
+      if (adminPorterBookingId) body.porterBookingId = adminPorterBookingId;
+      const res = await fetch(`/api/workday/${workDay.id}/transport`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      const { workDay: updated } = await res.json();
+      setWorkDays(prev => prev.map(w => w.id === updated.id ? updated : w));
+      setEditingTransportTripId(null);
+    } catch (e: any) {
+      alert('Failed to update transport: ' + e.message);
+    } finally {
+      setAdminTransportSaving(false);
+    }
+  }
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [d, v, t, a, s, u] = await Promise.all([
+      const [d, v, t, a, s, u, wd] = await Promise.all([
         fetch('/api/drivers').then(r => r.json()),
         fetch('/api/fleet').then(r => r.json()),
         fetch('/api/trips').then(r => r.json()),
         fetch('/api/activity').then(r => r.json()),
         fetch('/api/db-status').then(r => r.json()),
         fetch('/api/users').then(r => r.json()),
+        fetch('/api/workdays').then(r => r.json()).catch(() => ({ workDays: [] })),
       ]);
       setDrivers(d.drivers || []);
       setVehicles(v.vehicles || []);
       setTrips(t.trips || []);
+      setWorkDays(wd.workDays || []);
       setActivities(a.logs || []);
       setDbStatus(s);
 
@@ -560,6 +644,33 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Build lookup maps from workDays
+  const tripWorkDayMap = React.useMemo(() => {
+    const map: Record<string, WorkDay> = {};
+    workDays.forEach(wd => {
+      if (wd.role !== 'co-passenger') {
+        (wd.plannedTripIds || []).forEach(tid => { if (!map[tid]) map[tid] = wd; });
+      }
+    });
+    return map;
+  }, [workDays]);
+
+  const tripCoPassengerMap = React.useMemo(() => {
+    const map: Record<string, WorkDay> = {};
+    workDays.forEach(wd => {
+      if (wd.role === 'co-passenger') {
+        (wd.plannedTripIds || []).forEach(tid => { if (!map[tid]) map[tid] = wd; });
+      }
+    });
+    return map;
+  }, [workDays]);
+
+  const userIdToDriverMap = React.useMemo(() => {
+    const map: Record<string, Driver> = {};
+    drivers.forEach(d => { map[d.id] = d; });
+    return map;
+  }, [drivers]);
 
   async function deleteEmployee(username: string, driverName: string) {
     if (!window.confirm(`Delete employee "${driverName}"? This cannot be undone.`)) return;
@@ -1455,6 +1566,9 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                     const isExpanded = expandedTrip === trip.id;
                     const isIncomplete = trip.status === 'Incomplete';
                     const isReassigning = reassigningTripId === trip.id;
+                    const tripWorkDay = tripWorkDayMap[trip.id];
+                    const coPassengerWd = tripCoPassengerMap[trip.id];
+                    const coPassengerDriver = coPassengerWd ? userIdToDriverMap[coPassengerWd.userId] : null;
                     return (
                       <div key={trip.id} className={`rounded-2xl shadow-sm overflow-hidden ${isIncomplete ? 'border-2 border-red-300 bg-red-50' : 'border border-gray-100 bg-white'}`}>
                         {/* Incomplete banner */}
@@ -1560,6 +1674,9 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                   {trip.porter?.enabled && (
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-600">PORTER</span>
                                   )}
+                                  {tripWorkDay?.transportMode && (
+                                    <TransportBadge mode={tripWorkDay.transportMode} />
+                                  )}
                                 </div>
 
                                 {/* Row 2: customer + origin */}
@@ -1571,7 +1688,7 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                   <span className="text-sm font-semibold text-gray-800 truncate">{trip.origin}</span>
                                 </div>
 
-                                {/* Row 3: assigned employee + courier */}
+                                {/* Row 3: assigned employee + co-passenger + courier */}
                                 <div className="flex items-center gap-2 mt-1 flex-wrap">
                                   {driver && (
                                     <div className={`flex items-center gap-1 text-[11px] font-semibold ${isIncomplete ? 'text-red-500' : 'text-gray-500'}`}>
@@ -1579,6 +1696,12 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                         {(driver.fullName || '?').charAt(0).toUpperCase()}
                                       </div>
                                       {driver.fullName}
+                                    </div>
+                                  )}
+                                  {coPassengerDriver && (
+                                    <div className="flex items-center gap-1 text-[11px] font-semibold text-indigo-500">
+                                      <UserCheck size={11} />
+                                      {coPassengerDriver.fullName}
                                     </div>
                                   )}
                                   {trip.courierName && (
@@ -1761,6 +1884,105 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                                   </div>
                                 )}
 
+                                {/* ── Transport mode section ── */}
+                                {tripWorkDay && (
+                                  <div className="mx-4 mb-3">
+                                    {editingTransportTripId === trip.id ? (
+                                      <div className="border border-blue-200 rounded-xl overflow-hidden">
+                                        <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b border-blue-100">
+                                          <span className="text-xs font-bold text-blue-700 uppercase tracking-wide">Change Transport Mode</span>
+                                          <button onClick={() => setEditingTransportTripId(null)} className="text-blue-400 hover:text-blue-600"><X size={14} /></button>
+                                        </div>
+                                        <div className="p-3 space-y-3 bg-white">
+                                          {/* Mode grid */}
+                                          <div className="grid grid-cols-3 gap-2">
+                                            {ADMIN_TRANSPORT_OPTIONS.map(o => (
+                                              <button key={o.mode} onClick={() => { setAdminTransportMode(o.mode); setAdminTransportRole(''); setAdminTransportVehicleId(''); setAdminTransportPartnerId(''); }}
+                                                className={`flex flex-col items-center gap-1 p-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${adminTransportMode === o.mode ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}>
+                                                {o.icon}{o.label}
+                                              </button>
+                                            ))}
+                                          </div>
+
+                                          {/* Truck: role + vehicle/partner */}
+                                          {adminTransportMode === 'truck' && (
+                                            <div className="space-y-2">
+                                              <div className="grid grid-cols-2 gap-2">
+                                                {(['driver', 'co-passenger'] as const).map(r => (
+                                                  <button key={r} onClick={() => setAdminTransportRole(r)}
+                                                    className={`py-2 rounded-xl border-2 text-xs font-semibold capitalize transition-all ${adminTransportRole === r ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 text-gray-600'}`}>
+                                                    {r}
+                                                  </button>
+                                                ))}
+                                              </div>
+                                              {adminTransportRole === 'driver' && (
+                                                <div className="space-y-1">
+                                                  <div className="text-[10px] font-bold text-gray-500 uppercase">Select Truck</div>
+                                                  {vehicles.filter(v => v.vehicleType === 'Truck').map(v => (
+                                                    <button key={v.id} onClick={() => setAdminTransportVehicleId(v.id)}
+                                                      className={`w-full text-left p-2 rounded-xl border-2 text-xs transition-all ${adminTransportVehicleId === v.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                                                      <span className="font-semibold">{v.plate}</span> <span className="text-gray-400">{v.make} {v.model}</span>
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                              {adminTransportRole === 'co-passenger' && (
+                                                <div className="space-y-1">
+                                                  <div className="text-[10px] font-bold text-gray-500 uppercase">Select Driver Partner</div>
+                                                  {drivers.filter(d => d.id !== trip.driverId).map(d => (
+                                                    <button key={d.id} onClick={() => setAdminTransportPartnerId(d.id)}
+                                                      className={`w-full text-left p-2 rounded-xl border-2 text-xs transition-all ${adminTransportPartnerId === d.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
+                                                      <span className="font-semibold">{d.fullName}</span>
+                                                    </button>
+                                                  ))}
+                                                </div>
+                                              )}
+                                            </div>
+                                          )}
+
+                                          {/* Porter: vehicle number + amount */}
+                                          {adminTransportMode === 'porter' && (
+                                            <div className="space-y-2">
+                                              <input type="text" value={adminPorterVehicleNumber} onChange={e => setAdminPorterVehicleNumber(e.target.value.toUpperCase())}
+                                                placeholder="Vehicle Number (required)" className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                                              <input type="number" value={adminPorterAmount} onChange={e => setAdminPorterAmount(e.target.value)}
+                                                placeholder="Amount Paid ₹ (required)" className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                                              <input type="text" value={adminPorterBookingId} onChange={e => setAdminPorterBookingId(e.target.value)}
+                                                placeholder="Booking ID (optional)" className="w-full border border-gray-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-orange-400" />
+                                            </div>
+                                          )}
+
+                                          {/* Save/Cancel */}
+                                          <div className="flex gap-2 pt-1">
+                                            <button
+                                              onClick={() => saveAdminTransport(tripWorkDay)}
+                                              disabled={adminTransportSaving || (adminTransportMode === 'truck' && !adminTransportRole) || (adminTransportMode === 'porter' && (!adminPorterVehicleNumber || !adminPorterAmount))}
+                                              className="flex-1 py-2 bg-[#0f3d20] text-white text-xs font-bold rounded-xl disabled:opacity-40 flex items-center justify-center gap-1"
+                                            >
+                                              {adminTransportSaving ? 'Saving…' : <><Save size={11} /> Save Transport</>}
+                                            </button>
+                                            <button onClick={() => setEditingTransportTripId(null)} className="px-4 py-2 bg-gray-100 text-gray-600 text-xs font-bold rounded-xl">Cancel</button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-[10px] font-bold text-gray-400 uppercase">Transport</span>
+                                          <TransportBadge mode={tripWorkDay.transportMode} />
+                                          {tripWorkDay.role && <span className="text-[10px] text-gray-500 capitalize">· {tripWorkDay.role}</span>}
+                                          {tripWorkDay.porterVehicleNumber && <span className="text-[10px] font-mono text-gray-600">{tripWorkDay.porterVehicleNumber}</span>}
+                                          {tripWorkDay.porterAmount && <span className="text-[10px] text-gray-500">₹{tripWorkDay.porterAmount}</span>}
+                                        </div>
+                                        <button onClick={() => openAdminTransport(trip.id, tripWorkDay)}
+                                          className="flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">
+                                          <Edit size={11} /> Edit
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                )}
+
                                 <div className="flex gap-2 px-4 pb-3">
                                   <button
                                     onClick={() => startEditTask(trip)}
@@ -1805,6 +2027,9 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                   {completedTrips.map(trip => {
                     const driver = drivers.find(d => d.id === trip.driverId);
                     const isExpanded = expandedTrip === trip.id;
+                    const tripWorkDay = tripWorkDayMap[trip.id];
+                    const coPassengerWd = tripCoPassengerMap[trip.id];
+                    const coPassengerDriver = coPassengerWd ? userIdToDriverMap[coPassengerWd.userId] : null;
                     const allPhotos = [
                       ...(trip.packagePhoto ? [trip.packagePhoto] : []),
                       ...(trip.proofPhotos || []),
@@ -1822,11 +2047,17 @@ export function AdminDashboard({ sessionUser, onLogout, onAddVehicle }: Props) {
                               <div className="text-[10px] font-semibold text-purple-600 mb-0.5">{trip.customerName}</div>
                             )}
                             <div className="text-sm font-medium text-gray-700 truncate">{trip.origin}</div>
-                            <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2">
+                            <div className="text-xs text-gray-400 mt-0.5 flex items-center gap-2 flex-wrap">
                               <span>{driver?.fullName}</span>
+                              {coPassengerDriver && (
+                                <span className="flex items-center gap-0.5 text-indigo-500 font-medium">
+                                  <UserCheck size={10} />{coPassengerDriver.fullName}
+                                </span>
+                              )}
                               <span className={`font-medium ${trip.taskType === 'DELIVERY' ? 'text-green-600' : trip.taskType === 'BOTH' ? 'text-purple-600' : 'text-blue-600'}`}>
                                 {trip.taskType === 'BOTH' ? 'P+D' : trip.taskType}
                               </span>
+                              {tripWorkDay?.transportMode && <TransportBadge mode={tripWorkDay.transportMode} />}
                               {photoCount > 0 && (
                                 <span className="flex items-center gap-0.5 text-emerald-600 font-semibold">
                                   <Camera size={10} /> {photoCount} photo{photoCount > 1 ? 's' : ''}
